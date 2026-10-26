@@ -1,0 +1,21 @@
+{
+  "name": "affirmations",
+  "version": "1.0.0",
+  "description": "Science-backed affirmations with on-device LLM streaming and 24kHz Kokoro-82M neural voice synthesis.",
+  "type": "module",
+  "scripts": {
+    "start": "npx serve ."
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/hemanth/affirmations.git"
+  },
+  "homepage": "https://h3manth.com/ai/affirmations/",
+  "author": "Hemanth HM <hemanth@h3manth.com> (https://h3manth.com)",
+  "license": "MIT",
+  "dependencies": {
+    "@ondevice/localfirst": "^0.1.1",
+    "browser-llm-fit": "^1.0.2",
+    "webml-kit": "^0.2.0"
+  }
+}

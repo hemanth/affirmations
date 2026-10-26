@@ -1,0 +1,2084 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <title>affirmations</title>
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%23111111'/%3E%3Ccircle cx='16' cy='16' r='6' fill='none' stroke='%23F7F6F3' stroke-width='2'/%3E%3C/svg%3E" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <script type="importmap">
+    {
+      "imports": {
+        "@ondevice/localfirst": "./localfirst.browser.js",
+        "@ondevice/localfirst/detect": "./localfirst.browser.js",
+        "browser-llm-fit": "./browser-llm-fit.browser.js",
+        "webml-kit": "./webml-kit.browser.js"
+      }
+    }
+  </script>
+  <style>
+    :root {
+      --bg-canvas: #F7F6F3;
+      --bg-surface: #FFFFFF;
+      --bg-subtle: #F0EFEA;
+      --border-hairline: #EAEAEA;
+      --border-strong: #DCDAD4;
+      --text-primary: #111111;
+      --text-secondary: #787774;
+      --text-muted: #9E9C98;
+      --pastel-green-bg: #EDF3EC;
+      --pastel-green-fg: #346538;
+      --pastel-blue-bg: #E1F3FE;
+      --pastel-blue-fg: #1F6C9F;
+      --pastel-yellow-bg: #FBF3DB;
+      --pastel-yellow-fg: #956400;
+      --font-sans: 'SF Pro Display', 'Geist Sans', 'Helvetica Neue', -apple-system, BlinkMacSystemFont, sans-serif;
+      --font-serif: 'Instrument Serif', 'Newsreader', Georgia, serif;
+      --font-mono: 'JetBrains Mono', 'Geist Mono', 'SF Mono', monospace;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    html,
+    body {
+      background-color: var(--bg-canvas);
+      color: var(--text-primary);
+      font-family: var(--font-sans);
+      line-height: 1.6;
+      -webkit-font-smoothing: antialiased;
+      min-height: 100vh;
+      min-height: 100dvh;
+      overflow-x: hidden;
+    }
+
+    .ambient-layer {
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      z-index: 0;
+      background: radial-gradient(circle at 50% 14%, rgba(17, 17, 17, 0.025) 0%, transparent 62%);
+    }
+
+    main {
+      position: relative;
+      z-index: 1;
+      max-width: 800px;
+      margin: 0 auto;
+      padding: 76px 24px 128px;
+    }
+
+    .header-bar {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 24px;
+    }
+
+    h1 {
+      font-family: var(--font-serif);
+      font-weight: 400;
+      font-size: clamp(44px, 6.5vw, 68px);
+      line-height: 1.02;
+      letter-spacing: -0.03em;
+      color: var(--text-primary);
+    }
+
+    .device-pill {
+      appearance: none;
+      background: var(--bg-surface);
+      border: 1px solid var(--border-hairline);
+      border-radius: 9999px;
+      padding: 5px 12px;
+      font-family: var(--font-mono);
+      font-size: 11px;
+      letter-spacing: 0.02em;
+      color: var(--text-secondary);
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      cursor: pointer;
+      transition: border-color 150ms ease, color 150ms ease, background 150ms ease;
+      max-width: 100%;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .device-pill:hover {
+      border-color: var(--text-primary);
+      color: var(--text-primary);
+    }
+
+    .device-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--pastel-green-fg);
+      flex-shrink: 0;
+    }
+
+    .device-pill.loading .device-dot {
+      background: var(--pastel-yellow-fg);
+    }
+
+    form {
+      margin-bottom: 14px;
+    }
+
+    .input-shell {
+      position: relative;
+      display: flex;
+      align-items: center;
+      background: var(--bg-surface);
+      border: 1px solid var(--border-strong);
+      border-radius: 12px;
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.025);
+      transition: border-color 180ms ease, box-shadow 180ms ease;
+    }
+
+    .input-shell:focus-within {
+      border-color: var(--text-primary);
+      box-shadow: 0 10px 32px rgba(0, 0, 0, 0.045);
+    }
+
+    input {
+      width: 100%;
+      height: 68px;
+      padding: 0 108px 0 24px;
+      background: transparent;
+      border: none;
+      border-radius: 12px;
+      font-family: var(--font-serif);
+      font-size: clamp(20px, 2.8vw, 27px);
+      letter-spacing: -0.01em;
+      color: var(--text-primary);
+      outline: none;
+    }
+
+    input::placeholder {
+      color: var(--text-muted);
+      font-family: var(--font-serif);
+      font-style: italic;
+    }
+
+    .submit-kbd {
+      position: absolute;
+      right: 14px;
+      height: 36px;
+      padding: 0 12px;
+      background: var(--bg-canvas);
+      border: 1px solid var(--border-hairline);
+      border-radius: 6px;
+      font-family: var(--font-mono);
+      font-size: 11px;
+      letter-spacing: 0.04em;
+      color: var(--text-secondary);
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      cursor: pointer;
+      transition: background 150ms ease, color 150ms ease, border-color 150ms ease, transform 120ms ease;
+    }
+
+    .submit-kbd:hover {
+      background: var(--text-primary);
+      color: var(--bg-surface);
+      border-color: var(--text-primary);
+    }
+
+    .submit-kbd:active {
+      transform: scale(0.98);
+    }
+
+    /* Minimalist toolbar: sample scenario chips + count picker + repeat loop controls */
+    .toolbar-row {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      margin-bottom: 30px;
+    }
+
+    .sample-strip {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .sample-chip {
+      appearance: none;
+      background: var(--bg-surface);
+      border: 1px solid var(--border-hairline);
+      border-radius: 9999px;
+      padding: 6px 12px;
+      font-family: var(--font-sans);
+      font-size: 12px;
+      color: var(--text-secondary);
+      cursor: pointer;
+      white-space: nowrap;
+      transition: border-color 150ms ease, color 150ms ease, background 150ms ease, transform 120ms ease;
+    }
+
+    .sample-chip:hover {
+      border-color: var(--text-primary);
+      color: var(--text-primary);
+    }
+
+    .sample-chip.active {
+      background: var(--text-primary);
+      color: var(--bg-surface);
+      border-color: var(--text-primary);
+    }
+
+    .sample-chip:active {
+      transform: scale(0.98);
+    }
+
+    .controls-cluster {
+      display: inline-flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .pill-bar {
+      display: inline-flex;
+      align-items: center;
+      background: var(--bg-surface);
+      border: 1px solid var(--border-hairline);
+      border-radius: 8px;
+      padding: 2px;
+      gap: 2px;
+    }
+
+    .pill-btn {
+      appearance: none;
+      background: transparent;
+      border: none;
+      border-radius: 6px;
+      padding: 4px 9px;
+      min-height: 28px;
+      min-width: 28px;
+      font-family: var(--font-mono);
+      font-size: 11px;
+      letter-spacing: 0.03em;
+      color: var(--text-secondary);
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      transition: background 140ms ease, color 140ms ease;
+    }
+
+    .pill-btn:hover:not(:disabled) {
+      color: var(--text-primary);
+      background: var(--bg-canvas);
+    }
+
+    .pill-btn:disabled {
+      opacity: 0.32;
+      cursor: default;
+    }
+
+    .pill-btn.active {
+      background: var(--text-primary);
+      color: var(--bg-surface);
+    }
+
+    .pill-status {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: var(--text-secondary);
+      padding: 0 8px;
+      user-select: none;
+      white-space: nowrap;
+    }
+
+    .card-stream {
+      display: grid;
+      gap: 14px;
+    }
+
+    .aff-card {
+      position: relative;
+      overflow: hidden;
+      background: var(--bg-surface);
+      border: 1px solid var(--border-hairline);
+      border-radius: 10px;
+      padding: 26px 28px;
+      display: grid;
+      grid-template-columns: 34px 1fr auto;
+      grid-template-areas: "num body badge";
+      gap: 18px;
+      align-items: center;
+      cursor: pointer;
+      transition: border-color 200ms ease, box-shadow 200ms ease, transform 200ms ease;
+    }
+
+    .aff-card:hover {
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+    }
+
+    .aff-card:active {
+      transform: scale(0.996);
+    }
+
+    .aff-card.speaking {
+      border-color: var(--text-primary);
+      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.04);
+    }
+
+    .aff-progress {
+      position: absolute;
+      left: 0;
+      bottom: 0;
+      height: 2px;
+      width: 100%;
+      background: var(--text-primary);
+      transform-origin: left center;
+      transform: scaleX(0);
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    .aff-card.speaking .aff-progress {
+      opacity: 1;
+      transition: transform var(--speak-ms, 2800ms) linear;
+      transform: scaleX(1);
+    }
+
+    .aff-num {
+      grid-area: num;
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: var(--text-secondary);
+      width: 28px;
+      height: 28px;
+      border: 1px solid var(--border-hairline);
+      border-radius: 6px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: background 180ms ease, color 180ms ease, border-color 180ms ease;
+    }
+
+    .aff-card.speaking .aff-num {
+      background: var(--text-primary);
+      color: var(--bg-surface);
+      border-color: var(--text-primary);
+    }
+
+    .aff-body {
+      grid-area: body;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      min-width: 0;
+    }
+
+    .aff-text {
+      font-family: var(--font-serif);
+      font-size: clamp(21px, 3vw, 29px);
+      line-height: 1.25;
+      letter-spacing: -0.015em;
+      color: var(--text-primary);
+      overflow-wrap: break-word;
+    }
+
+    .aff-science {
+      font-family: var(--font-mono);
+      font-size: 10px;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: var(--text-muted);
+    }
+
+    .aff-badge {
+      grid-area: badge;
+      font-family: var(--font-mono);
+      font-size: 10px;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      padding: 4px 10px;
+      border-radius: 9999px;
+      background: var(--pastel-blue-bg);
+      color: var(--pastel-blue-fg);
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      white-space: nowrap;
+    }
+
+    .aff-card.streaming .aff-badge {
+      background: var(--pastel-yellow-bg);
+      color: var(--pastel-yellow-fg);
+    }
+
+    .aff-card.speaking .aff-badge {
+      background: var(--pastel-green-bg);
+      color: var(--pastel-green-fg);
+    }
+
+    .voice-bars {
+      display: none;
+      align-items: center;
+      gap: 2px;
+      height: 10px;
+    }
+
+    .aff-card.speaking .voice-bars {
+      display: inline-flex;
+    }
+
+    .voice-bars i {
+      display: block;
+      width: 1.5px;
+      height: 8px;
+      background: currentColor;
+      border-radius: 1px;
+    }
+
+    /* Mobile & Tablet Responsive Layout */
+    @media (max-width: 640px) {
+      main {
+        padding: calc(22px + env(safe-area-inset-top, 0px)) 16px calc(72px + env(safe-area-inset-bottom, 0px));
+      }
+
+      .header-bar {
+        margin-bottom: 16px;
+        gap: 8px;
+      }
+
+      h1 {
+        font-size: clamp(38px, 10vw, 48px);
+      }
+
+      .device-pill {
+        font-size: 10px;
+        padding: 4px 10px;
+      }
+
+      input {
+        height: 56px;
+        padding: 0 58px 0 16px;
+        font-size: 18px; /* >=16px prevents iOS Safari auto-zoom on focus */
+      }
+
+      .submit-kbd {
+        right: 10px;
+        height: 36px;
+        min-width: 36px;
+        padding: 0 10px;
+      }
+
+      .submit-kbd .kbd-label {
+        display: none;
+      }
+
+      .toolbar-row {
+        gap: 10px;
+        margin-bottom: 20px;
+      }
+
+      .sample-strip {
+        width: 100%;
+        flex-wrap: nowrap;
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+        scrollbar-width: none;
+        padding-bottom: 2px;
+      }
+
+      .sample-strip::-webkit-scrollbar {
+        display: none;
+      }
+
+      .sample-chip {
+        flex-shrink: 0;
+        padding: 7px 13px;
+        font-size: 12.5px;
+        min-height: 34px;
+      }
+
+      .controls-cluster {
+        width: 100%;
+        justify-content: space-between;
+        gap: 6px;
+      }
+
+      .pill-btn {
+        min-height: 32px;
+        min-width: 32px;
+        padding: 4px 10px;
+        font-size: 12px;
+      }
+
+      .card-stream {
+        gap: 11px;
+      }
+
+      .aff-card {
+        padding: 16px 16px 18px;
+        grid-template-columns: 28px 1fr auto;
+        grid-template-areas:
+          "num . badge"
+          "body body body";
+        gap: 10px;
+        align-items: start;
+      }
+
+      .aff-badge {
+        justify-self: end;
+        align-self: center;
+      }
+
+      .aff-text {
+        font-size: clamp(20px, 5.4vw, 24px);
+        line-height: 1.3;
+      }
+
+      .aff-science {
+        font-size: 9.5px;
+      }
+    }
+
+    @media (prefers-reduced-motion: no-preference) {
+      .aff-card {
+        animation: cardReveal 460ms cubic-bezier(0.16, 1, 0.3, 1) both;
+        animation-delay: var(--stagger, 0ms);
+      }
+
+      @keyframes cardReveal {
+        from {
+          opacity: 0;
+          transform: translateY(12px);
+        }
+        to {
+          opacity: 1;
+          transform: translateY(0);
+        }
+      }
+
+      .aff-card.speaking .voice-bars i:nth-child(1) {
+        animation: barPulse 640ms ease-in-out infinite alternate;
+      }
+      .aff-card.speaking .voice-bars i:nth-child(2) {
+        animation: barPulse 640ms ease-in-out 180ms infinite alternate;
+      }
+      .aff-card.speaking .voice-bars i:nth-child(3) {
+        animation: barPulse 640ms ease-in-out 340ms infinite alternate;
+      }
+
+      @keyframes barPulse {
+        from { transform: scaleY(0.35); }
+        to   { transform: scaleY(1); }
+      }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      .aff-card,
+      .aff-card.speaking .voice-bars i {
+        animation: none !important;
+      }
+      .aff-card.speaking .aff-progress {
+        transition: none !important;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="ambient-layer" aria-hidden="true"></div>
+  <main>
+    <div class="header-bar">
+      <h1>affirmations</h1>
+      <button
+        type="button"
+        class="device-pill loading"
+        id="deviceBadge"
+        title="Probed via @ondevice/localfirst detect() & browser-llm-fit — click to cycle lightweight model tier"
+      >
+        <span class="device-dot" aria-hidden="true"></span>
+        <span id="deviceBadgeText">localfirst · probing device...</span>
+      </button>
+    </div>
+
+    <form id="scenarioForm">
+      <div class="input-shell">
+        <input
+          id="scenarioInput"
+          type="text"
+          placeholder="Describe a moment — or pick Daily Grounding..."
+          autocomplete="off"
+          autofocus
+        />
+        <button type="submit" class="submit-kbd" title="Stream affirmations">
+          <span class="kbd-label">Enter</span>
+          <span aria-hidden="true">↵</span>
+        </button>
+      </div>
+    </form>
+
+    <div class="toolbar-row">
+      <div class="sample-strip" id="sampleStrip" aria-label="Science-backed presets">
+        <button type="button" class="sample-chip" data-sample="daily">Daily grounding</button>
+        <button type="button" class="sample-chip" data-sample="outage">Production outage</button>
+        <button type="button" class="sample-chip" data-sample="presentation">High-stakes talk</button>
+        <button type="button" class="sample-chip" data-sample="imposter">Imposter syndrome</button>
+        <button type="button" class="sample-chip" data-sample="burnout">Burnout recovery</button>
+        <button type="button" class="sample-chip" data-sample="shipping">Shipping v1</button>
+      </div>
+
+      <div class="controls-cluster">
+        <!-- Number of affirmations picker (1 to 10 max) -->
+        <div class="pill-bar" role="group" aria-label="Number of affirmations (1 to 10)">
+          <span class="pill-status" id="countStatus">Cards · 4</span>
+          <button type="button" class="pill-btn" id="countDecBtn" title="Fewer affirmations (min 1)">−</button>
+          <button type="button" class="pill-btn" id="countIncBtn" title="More affirmations (max 10)">+</button>
+        </div>
+
+        <!-- Repeat loop controller -->
+        <div class="pill-bar" role="group" aria-label="Repeat mode">
+          <span class="pill-status" id="repeatStatus">Repeat · 1×</span>
+          <button type="button" class="pill-btn" id="repeatDecBtn" title="Decrease repeat count">−</button>
+          <button type="button" class="pill-btn" id="repeatIncBtn" title="Increase repeat count">+</button>
+          <button type="button" class="pill-btn" id="repeatInfBtn" title="Infinite repeat loop">∞</button>
+        </div>
+      </div>
+    </div>
+
+    <section id="jsonRenderRoot" class="card-stream" aria-live="polite"></section>
+  </main>
+
+  <script type="module">
+    import localfirst, { detect } from "@ondevice/localfirst";
+    import fit from "browser-llm-fit";
+    import { ModelClient, detectDevice } from "webml-kit";
+
+    const TTS_MODEL_ID = "onnx-community/Kokoro-82M-v1.0-ONNX";
+
+    /**
+     * Tiered lightweight on-device LLM catalog.
+     * Probed dynamically at startup via @ondevice/localfirst `detect()` + `browser-llm-fit` `fit()`.
+     */
+    const LIGHTWEIGHT_MODEL_TIERS = [
+      {
+        key: "smollm2-135m",
+        fitId: "smollm2-135m-instruct",
+        modelId: "HuggingFaceTB/SmolLM2-135M-Instruct",
+        shortName: "SmolLM2-135M",
+        sizeMB: 92,
+        dtype: "q4",
+        tierName: "Mobile Ultra-Light",
+      },
+      {
+        key: "smollm2-360m",
+        fitId: "smollm2-360m-instruct",
+        modelId: "HuggingFaceTB/SmolLM2-360M-Instruct",
+        shortName: "SmolLM2-360M",
+        sizeMB: 240,
+        dtype: "q4",
+        tierName: "Compact Edge",
+      },
+      {
+        key: "qwen2.5-0.5b",
+        fitId: "qwen-2.5-0.5b-instruct",
+        modelId: "onnx-community/Qwen2.5-0.5B-Instruct",
+        shortName: "Qwen2.5-0.5B",
+        sizeMB: 350,
+        dtype: "q4",
+        tierName: "Desktop WebGPU",
+      },
+    ];
+
+    // 10 Evidence-Based Psychological & Neuroscience Lenses
+    const SCIENCE_LENSES = [
+      {
+        tag: "Attentional Control · dlPFC Focus",
+        cue: "Focus on narrowing attention to one controllable variable while letting background noise fade.",
+      },
+      {
+        tag: "Arousal Reappraisal · Crum et al.",
+        cue: "Reframe physical alertness or rapid heartbeat as oxygen and energy preparing the brain for clarity.",
+      },
+      {
+        tag: "Self-Affirmation · Steele & Cascio vmPFC",
+        cue: "Anchor self-worth in core personal values, curiosity, and integrity rather than a single outcome.",
+      },
+      {
+        tag: "Cognitive Defusion · ACT",
+        cue: "Separate transient anxious thoughts or external urgency from commands you must obey.",
+      },
+      {
+        tag: "Autonomic Regulation · Vagal Brake",
+        cue: "Connect a slow, deliberate exhale with physical relaxation and steady prefrontal calm.",
+      },
+      {
+        tag: "Implementation Intention · Gollwitzer",
+        cue: "Focus on shrinking a complex situation down to the next concrete, verifiable step.",
+      },
+      {
+        tag: "Neuroplastic Error Learning · Dweck",
+        cue: "Frame obstacles, bugs, or unfamiliar territory as diagnostic feedback that sharpens mastery.",
+      },
+      {
+        tag: "Working-Memory Protection · Cognitive Load",
+        cue: "Affirm protecting unfragmented time and single-tasking to keep mental bandwidth clear.",
+      },
+      {
+        tag: "Self-Distancing · Kross & Neff",
+        cue: "Speak to yourself with objective, steady respect rather than harsh internal criticism.",
+      },
+      {
+        tag: "Zeigarnik Closure · Bounded Progress",
+        cue: "Affirm that honest, bounded progress today is sufficient without needing to solve everything at once.",
+      },
+    ];
+
+    // Science-baked presets (each has 10 unique affirmations with pre-baked 24kHz Kokoro-82M WAVs)
+    const PRECOOKED_SCENARIOS = {
+      daily: {
+        query: "daily science-backed positive grounding",
+        affirmations: [
+          {
+            text: "I direct my attention to one meaningful task at a time, letting background noise fade.",
+            science: SCIENCE_LENSES[0].tag,
+            audioUrl: "./audio/daily-0.wav",
+          },
+          {
+            text: "The energy in my body today is fuel preparing my mind for clear, decisive action.",
+            science: SCIENCE_LENSES[1].tag,
+            audioUrl: "./audio/daily-1.wav",
+          },
+          {
+            text: "My worth rests on my curiosity, integrity, and effort, never on a single outcome.",
+            science: SCIENCE_LENSES[2].tag,
+            audioUrl: "./audio/daily-2.wav",
+          },
+          {
+            text: "I notice stressful thoughts passing through without treating every urgent feeling as a command.",
+            science: SCIENCE_LENSES[3].tag,
+            audioUrl: "./audio/daily-3.wav",
+          },
+          {
+            text: "With each slow exhale, my shoulders drop and my nervous system settles into steady calm.",
+            science: SCIENCE_LENSES[4].tag,
+            audioUrl: "./audio/daily-4.wav",
+          },
+          {
+            text: "When friction appears, I shrink the problem to the next small, verifiable step in front of me.",
+            science: SCIENCE_LENSES[5].tag,
+            audioUrl: "./audio/daily-5.wav",
+          },
+          {
+            text: "Every unfamiliar challenge I work through today strengthens my judgment for tomorrow.",
+            science: SCIENCE_LENSES[6].tag,
+            audioUrl: "./audio/daily-6.wav",
+          },
+          {
+            text: "Protecting quiet, unfragmented time is how I give my best thinking to the work that matters.",
+            science: SCIENCE_LENSES[7].tag,
+            audioUrl: "./audio/daily-7.wav",
+          },
+          {
+            text: "I speak to myself with the same patience and precision I offer someone I respect.",
+            science: SCIENCE_LENSES[8].tag,
+            audioUrl: "./audio/daily-8.wav",
+          },
+          {
+            text: "Consistent, honest progress today is enough; I do not need to finish everything at once.",
+            science: SCIENCE_LENSES[9].tag,
+            audioUrl: "./audio/daily-9.wav",
+          },
+        ],
+      },
+      outage: {
+        query: "debugging a production outage",
+        affirmations: [
+          {
+            text: "I read the telemetry methodically, and I isolate one variable at a time without rushing.",
+            science: SCIENCE_LENSES[0].tag,
+            audioUrl: "./audio/outage-0.wav",
+          },
+          {
+            text: "Urgency in the channel does not dictate the pace or clarity of my thinking.",
+            science: SCIENCE_LENSES[3].tag,
+            audioUrl: "./audio/outage-1.wav",
+          },
+          {
+            text: "Every hypothesis I rule out narrows the search space and brings the root cause closer.",
+            science: SCIENCE_LENSES[6].tag,
+            audioUrl: "./audio/outage-2.wav",
+          },
+          {
+            text: "My focus stays on restoring service safely first, and analyzing deeper lessons second.",
+            science: SCIENCE_LENSES[5].tag,
+            audioUrl: "./audio/outage-3.wav",
+          },
+          {
+            text: "Adrenaline in my system sharpens my visual scanning while my breathing stays measured.",
+            science: SCIENCE_LENSES[1].tag,
+            audioUrl: "./audio/outage-4.wav",
+          },
+          {
+            text: "I communicate observed facts clearly so the team can coordinate without speculation.",
+            science: SCIENCE_LENSES[2].tag,
+            audioUrl: "./audio/outage-5.wav",
+          },
+          {
+            text: "A slow exhale before running a production command keeps my execution deliberate and safe.",
+            science: SCIENCE_LENSES[4].tag,
+            audioUrl: "./audio/outage-6.wav",
+          },
+          {
+            text: "I mute redundant notifications so my working memory stays locked on the active trace.",
+            science: SCIENCE_LENSES[7].tag,
+            audioUrl: "./audio/outage-7.wav",
+          },
+          {
+            text: "Complex distributed systems fail in patterns I can untangle one layer at a time.",
+            science: SCIENCE_LENSES[8].tag,
+            audioUrl: "./audio/outage-8.wav",
+          },
+          {
+            text: "Once service is stable, I document the timeline cleanly and let my nervous system recover.",
+            science: SCIENCE_LENSES[9].tag,
+            audioUrl: "./audio/outage-9.wav",
+          },
+        ],
+      },
+      presentation: {
+        query: "before a high-stakes presentation",
+        affirmations: [
+          {
+            text: "I know the work deeply, and I speak at a measured, deliberate pace.",
+            science: SCIENCE_LENSES[2].tag,
+            audioUrl: "./audio/presentation-0.wav",
+          },
+          {
+            text: "A brief pause before answering a hard question shows composure, not uncertainty.",
+            science: SCIENCE_LENSES[4].tag,
+            audioUrl: "./audio/presentation-1.wav",
+          },
+          {
+            text: "My role is to make complex ideas clear, not to perform perfection.",
+            science: SCIENCE_LENSES[3].tag,
+            audioUrl: "./audio/presentation-2.wav",
+          },
+          {
+            text: "The physical energy in my chest is readiness sharpening my attention.",
+            science: SCIENCE_LENSES[1].tag,
+            audioUrl: "./audio/presentation-3.wav",
+          },
+          {
+            text: "I anchor my eyes on one listener at a time and explain the core trade-off plainly.",
+            science: SCIENCE_LENSES[0].tag,
+            audioUrl: "./audio/presentation-4.wav",
+          },
+          {
+            text: "Skeptical questions are invitations to examine the architecture together, not personal attacks.",
+            science: SCIENCE_LENSES[6].tag,
+            audioUrl: "./audio/presentation-5.wav",
+          },
+          {
+            text: "If I do not know a metric offhand, stating how I will verify it builds real trust.",
+            science: SCIENCE_LENSES[5].tag,
+            audioUrl: "./audio/presentation-6.wav",
+          },
+          {
+            text: "I let go of rehearsing the tenth slide while I am speaking on the first.",
+            science: SCIENCE_LENSES[7].tag,
+            audioUrl: "./audio/presentation-7.wav",
+          },
+          {
+            text: "My preparation is already done; right now I only need to be present in this conversation.",
+            science: SCIENCE_LENSES[8].tag,
+            audioUrl: "./audio/presentation-8.wav",
+          },
+          {
+            text: "Each clear sentence lands on its own without needing filler or rush.",
+            science: SCIENCE_LENSES[9].tag,
+            audioUrl: "./audio/presentation-9.wav",
+          },
+        ],
+      },
+      imposter: {
+        query: "imposter syndrome in a new role",
+        affirmations: [
+          {
+            text: "Being unfamiliar with a codebase is a temporary state, not a measure of my ability.",
+            science: SCIENCE_LENSES[3].tag,
+            audioUrl: "./audio/imposter-0.wav",
+          },
+          {
+            text: "I was brought into this room for how I learn and reason through new problems.",
+            science: SCIENCE_LENSES[2].tag,
+            audioUrl: "./audio/imposter-1.wav",
+          },
+          {
+            text: "Asking a direct, specific question early saves days of silent guesswork.",
+            science: SCIENCE_LENSES[5].tag,
+            audioUrl: "./audio/imposter-2.wav",
+          },
+          {
+            text: "Each small commit builds real context that compounds week over week.",
+            science: SCIENCE_LENSES[6].tag,
+            audioUrl: "./audio/imposter-3.wav",
+          },
+          {
+            text: "Discomfort when reading unfamiliar architecture is the exact sensation of my mental map expanding.",
+            science: SCIENCE_LENSES[1].tag,
+            audioUrl: "./audio/imposter-4.wav",
+          },
+          {
+            text: "I trace one request path end-to-end instead of trying to memorize the entire repository today.",
+            science: SCIENCE_LENSES[0].tag,
+            audioUrl: "./audio/imposter-5.wav",
+          },
+          {
+            text: "Fresh eyes notice assumptions that long-tenured teammates have stopped questioning.",
+            science: SCIENCE_LENSES[8].tag,
+            audioUrl: "./audio/imposter-6.wav",
+          },
+          {
+            text: "I compare my understanding today only with what I knew last Monday.",
+            science: SCIENCE_LENSES[7].tag,
+            audioUrl: "./audio/imposter-7.wav",
+          },
+          {
+            text: "A steady breath steadies my voice when I share an early design observation.",
+            science: SCIENCE_LENSES[4].tag,
+            audioUrl: "./audio/imposter-8.wav",
+          },
+          {
+            text: "Mapping one module thoroughly today is a complete, solid day of onboarding.",
+            science: SCIENCE_LENSES[9].tag,
+            audioUrl: "./audio/imposter-9.wav",
+          },
+        ],
+      },
+      burnout: {
+        query: "recovering after burnout",
+        affirmations: [
+          {
+            text: "Stepping away from the screen when my focus fades is disciplined engineering, not laziness.",
+            science: SCIENCE_LENSES[7].tag,
+            audioUrl: "./audio/burnout-0.wav",
+          },
+          {
+            text: "My worth is not measured by how many hours I stay online today.",
+            science: SCIENCE_LENSES[2].tag,
+            audioUrl: "./audio/burnout-1.wav",
+          },
+          {
+            text: "I protect quiet blocks of unfragmented time so my mind can work without friction.",
+            science: SCIENCE_LENSES[0].tag,
+            audioUrl: "./audio/burnout-2.wav",
+          },
+          {
+            text: "Sustainable pace produces cleaner architecture than exhausted urgency ever could.",
+            science: SCIENCE_LENSES[9].tag,
+            audioUrl: "./audio/burnout-3.wav",
+          },
+          {
+            text: "I notice guilt about resting as an old habit, and I let my nervous system downshift anyway.",
+            science: SCIENCE_LENSES[3].tag,
+            audioUrl: "./audio/burnout-4.wav",
+          },
+          {
+            text: "Choosing one high-leverage task today is wiser than scattering depleted energy across ten.",
+            science: SCIENCE_LENSES[5].tag,
+            audioUrl: "./audio/burnout-5.wav",
+          },
+          {
+            text: "Long exhales signal safety to my body so deep cognitive recovery can happen.",
+            science: SCIENCE_LENSES[4].tag,
+            audioUrl: "./audio/burnout-6.wav",
+          },
+          {
+            text: "Saying no to non-essential scope protects the quality of the commitments I keep.",
+            science: SCIENCE_LENSES[8].tag,
+            audioUrl: "./audio/burnout-7.wav",
+          },
+          {
+            text: "Curiosity returns naturally when I stop forcing every hour to be maximally productive.",
+            science: SCIENCE_LENSES[6].tag,
+            audioUrl: "./audio/burnout-8.wav",
+          },
+          {
+            text: "Closing my laptop on time tonight is an investment in tomorrow's clarity.",
+            science: SCIENCE_LENSES[1].tag,
+            audioUrl: "./audio/burnout-9.wav",
+          },
+        ],
+      },
+      shipping: {
+        query: "shipping an imperfect v1",
+        affirmations: [
+          {
+            text: "Real feedback from a working release teaches more than another week of private polish.",
+            science: SCIENCE_LENSES[6].tag,
+            audioUrl: "./audio/shipping-0.wav",
+          },
+          {
+            text: "I separate core reliability from nice-to-have scope so I can ship with confidence.",
+            science: SCIENCE_LENSES[0].tag,
+            audioUrl: "./audio/shipping-1.wav",
+          },
+          {
+            text: "Iteration is only possible once the first version is in someone's hands.",
+            science: SCIENCE_LENSES[5].tag,
+            audioUrl: "./audio/shipping-2.wav",
+          },
+          {
+            text: "Shipping today creates momentum that makes tomorrow's improvements effortless.",
+            science: SCIENCE_LENSES[9].tag,
+            audioUrl: "./audio/shipping-3.wav",
+          },
+          {
+            text: "The urge to over-engineer edge cases before launch is just hesitation disguised as perfectionism.",
+            science: SCIENCE_LENSES[3].tag,
+            audioUrl: "./audio/shipping-4.wav",
+          },
+          {
+            text: "My professional craft shows in how responsively I iterate, not in hiding work until it is flawless.",
+            science: SCIENCE_LENSES[2].tag,
+            audioUrl: "./audio/shipping-5.wav",
+          },
+          {
+            text: "Pre-launch butterflies mean I care about the craft and I am ready to put it in the world.",
+            science: SCIENCE_LENSES[1].tag,
+            audioUrl: "./audio/shipping-6.wav",
+          },
+          {
+            text: "I verify the critical path once more, breathe out, and press deploy.",
+            science: SCIENCE_LENSES[4].tag,
+            audioUrl: "./audio/shipping-7.wav",
+          },
+          {
+            text: "Every great system started as a small, working version one that dared to ship.",
+            science: SCIENCE_LENSES[8].tag,
+            audioUrl: "./audio/shipping-8.wav",
+          },
+          {
+            text: "Scope I defer to v1.1 keeps today's release focused, testable, and calm.",
+            science: SCIENCE_LENSES[7].tag,
+            audioUrl: "./audio/shipping-9.wav",
+          },
+        ],
+      },
+    };
+
+    const llmClient = new ModelClient("./model-worker.js");
+    const ttsClient = new ModelClient("./model-worker.js");
+
+    const root = document.getElementById("jsonRenderRoot");
+    const input = document.getElementById("scenarioInput");
+    const form = document.getElementById("scenarioForm");
+    const deviceBadge = document.getElementById("deviceBadge");
+    const deviceBadgeText = document.getElementById("deviceBadgeText");
+
+    const countStatus = document.getElementById("countStatus");
+    const countDecBtn = document.getElementById("countDecBtn");
+    const countIncBtn = document.getElementById("countIncBtn");
+
+    const repeatStatus = document.getElementById("repeatStatus");
+    const repeatDecBtn = document.getElementById("repeatDecBtn");
+    const repeatIncBtn = document.getElementById("repeatIncBtn");
+    const repeatInfBtn = document.getElementById("repeatInfBtn");
+
+    let currentGenId = 0;
+    let llmReady = false;
+    let ttsReady = false;
+    let llmLoadPromise = null;
+    let ttsLoadPromise = null;
+    let generationComplete = false;
+    let activeSampleKey = null;
+
+    // Hardware & model state probed by @ondevice/localfirst + browser-llm-fit
+    let localfirstTelemetry = null;
+    let localfirstEngine = null;
+    let selectedModelTier = LIGHTWEIGHT_MODEL_TIERS[0];
+    let selectedBackend = "wasm";
+    let isMobileDevice = false;
+
+    // User-selected affirmation count (1..10 max)
+    let selectedCardCount = 4;
+
+    // Repeat mode state: repeatCount = 1..99 or Infinity
+    let repeatCount = 1;
+    let completedPasses = 0;
+
+    let audioCtx = null;
+    let masterGain = null;
+    let currentSource = null;
+    let isPlaying = false;
+    let audioQueue = [];
+    let activeSpeakingId = -1;
+    let activeSpeakDurationMs = 2800;
+    let currentSpec = null;
+
+    const cardAudioChunks = new Map();
+    const wavBufferCache = new Map();
+
+    /**
+     * Detect mobile hardware / viewport and probe optimal lightweight model
+     * using @ondevice/localfirst `detect()` and `browser-llm-fit` `fit()`.
+     */
+    function checkIsMobileViewportOrUA() {
+      const params = new URLSearchParams(window.location.search);
+      if (params.get("mobile") === "1" || params.get("device") === "mobile") return true;
+      if (params.get("mobile") === "0" || params.get("device") === "desktop") return false;
+      const ua = navigator.userAgent || "";
+      const mobileUA = /Android|iPhone|iPad|iPod|Mobile|CriOS|FxiOS/i.test(ua);
+      const smallViewport = window.matchMedia("(max-width: 768px)").matches;
+      const coarseTouch =
+        window.matchMedia("(pointer: coarse)").matches && window.innerWidth <= 1024;
+      return mobileUA || smallViewport || coarseTouch;
+    }
+
+    async function probeHardwareAndSelectModel(forcedTierKey = null) {
+      // 1. Probe hardware capabilities in <2ms with @ondevice/localfirst detect()
+      localfirstTelemetry = await detect({ forceRefresh: true });
+      isMobileDevice = checkIsMobileViewportOrUA();
+
+      const hasWebGPU = Boolean(localfirstTelemetry?.gpu?.webgpu);
+      selectedBackend = hasWebGPU ? "webgpu" : "wasm";
+
+      const navMem = typeof navigator !== "undefined" ? navigator.deviceMemory : undefined;
+      const reportedRamGb = navMem || localfirstTelemetry?.memory?.totalGb || (hasWebGPU && !isMobileDevice ? 8 : 4);
+      // Mobile browsers impose strict per-tab memory ceilings (~3GB effective envelope)
+      const effectiveRamGb = isMobileDevice ? Math.min(reportedRamGb, 3) : reportedRamGb;
+      const fitGpuMode = hasWebGPU ? "webgpu-f16" : "wasm-cpu";
+
+      const params = new URLSearchParams(window.location.search);
+      const requestedKey = forcedTierKey || params.get("model");
+
+      if (requestedKey) {
+        const match = LIGHTWEIGHT_MODEL_TIERS.find(
+          (t) => t.key === requestedKey || t.modelId.toLowerCase().includes(requestedKey.toLowerCase())
+        );
+        if (match) {
+          selectedModelTier = match;
+        }
+      } else if (
+        isMobileDevice ||
+        !hasWebGPU ||
+        localfirstTelemetry?.models?.llm?.tier === "wasm-simd" ||
+        effectiveRamGb < 4
+      ) {
+        // Mobile / tablet / low-memory / WASM -> load ultra-lightweight SmolLM2-135M (92MB q4)
+        selectedModelTier = LIGHTWEIGHT_MODEL_TIERS[0];
+      } else if (effectiveRamGb < 8) {
+        // Mid-tier 4-6GB WebGPU -> SmolLM2-360M (240MB q4)
+        selectedModelTier = LIGHTWEIGHT_MODEL_TIERS[1];
+      } else {
+        // Desktop 8GB+ WebGPU -> Qwen2.5-0.5B (350MB q4)
+        selectedModelTier = LIGHTWEIGHT_MODEL_TIERS[2];
+      }
+
+      // Immediately update badge after <2ms @ondevice/localfirst probe
+      updateDeviceBadgeUI("probed");
+
+      // 2. Verify candidate fit via browser-llm-fit `fit()` and downgrade tier if needed
+      try {
+        const fitCheck = await fit(selectedModelTier.fitId, {
+          ram: effectiveRamGb,
+          gpu: fitGpuMode,
+        });
+        if (!fitCheck.fits && selectedModelTier.key !== "smollm2-135m") {
+          selectedModelTier = LIGHTWEIGHT_MODEL_TIERS[0];
+          updateDeviceBadgeUI("probed");
+        }
+      } catch (_) {}
+
+      // 3. Configure @ondevice/localfirst HybridEngine with local runner & zero-crash fallback
+      localfirstEngine = await localfirst({
+        mode: "prefer-local",
+        local: {
+          llm: {
+            load: () => initLLMPreload(),
+            generate: async (prompt, opts = {}) => {
+              await initLLMPreload();
+              let out = "";
+              for await (const { token } of llmClient.stream(prompt, opts)) {
+                out += token;
+              }
+              return { text: out, confidence: 0.92, source: "local" };
+            },
+            generateStream: async function* (messages, opts = {}) {
+              await initLLMPreload();
+              let accumulated = "";
+              for await (const { token } of llmClient.stream(messages, opts)) {
+                accumulated += token;
+                yield {
+                  token,
+                  text: accumulated,
+                  source: "local",
+                  confidence: 0.92,
+                  done: false,
+                };
+              }
+            },
+          },
+          tts: {
+            load: () => initTTSPreload(),
+            speak: async (text, opts = {}) => {
+              await initTTSPreload();
+              return await ttsClient.run("text-to-speech", text, {
+                voice: opts.voice || "af_heart",
+                speed: opts.speed || 1.0,
+              });
+            },
+          },
+        },
+      });
+
+      return {
+        telemetry: localfirstTelemetry,
+        model: selectedModelTier,
+        backend: selectedBackend,
+        isMobileDevice,
+      };
+    }
+
+    function updateDeviceBadgeUI(state = "ready", progressPercent = null) {
+      const modeTag = isMobileDevice ? "Mobile" : selectedBackend.toUpperCase();
+      if (state === "loading") {
+        deviceBadge.classList.add("loading");
+        const pct = progressPercent !== null ? ` ${progressPercent}%` : "";
+        deviceBadgeText.textContent = `localfirst · ${selectedModelTier.shortName} (${selectedModelTier.sizeMB}MB${pct})`;
+      } else {
+        deviceBadge.classList.toggle("loading", !llmReady);
+        deviceBadgeText.textContent = `localfirst · ${selectedModelTier.shortName} (${selectedModelTier.sizeMB}MB · ${modeTag})`;
+      }
+    }
+
+    // Allow clicking the device pill to cycle between the 3 lightweight models
+    deviceBadge.addEventListener("click", async () => {
+      const idx = LIGHTWEIGHT_MODEL_TIERS.findIndex((t) => t.key === selectedModelTier.key);
+      const nextTier = LIGHTWEIGHT_MODEL_TIERS[(idx + 1) % LIGHTWEIGHT_MODEL_TIERS.length];
+      selectedModelTier = nextTier;
+      llmReady = false;
+      llmLoadPromise = null;
+      updateDeviceBadgeUI("loading", 0);
+      await initLLMPreload();
+    });
+
+    function updateCountUI() {
+      countStatus.textContent = `Cards · ${selectedCardCount}`;
+      countDecBtn.disabled = selectedCardCount <= 1;
+      countIncBtn.disabled = selectedCardCount >= 10;
+    }
+
+    countDecBtn.addEventListener("click", () => {
+      if (selectedCardCount > 1) {
+        selectedCardCount -= 1;
+        updateCountUI();
+        if (activeSampleKey) {
+          startScenario(PRECOOKED_SCENARIOS[activeSampleKey].query, activeSampleKey);
+        }
+      }
+    });
+
+    countIncBtn.addEventListener("click", () => {
+      if (selectedCardCount < 10) {
+        selectedCardCount += 1;
+        updateCountUI();
+        if (activeSampleKey) {
+          startScenario(PRECOOKED_SCENARIOS[activeSampleKey].query, activeSampleKey);
+        }
+      }
+    });
+
+    updateCountUI();
+
+    function updateRepeatUI() {
+      const isInf = repeatCount === Infinity;
+      repeatInfBtn.classList.toggle("active", isInf);
+      const countLabel = isInf ? "∞" : `${repeatCount}×`;
+      if (isPlaying && (repeatCount > 1 || isInf) && completedPasses > 0) {
+        repeatStatus.textContent = isInf
+          ? `Loop · Pass ${completedPasses + 1} of ∞`
+          : `Loop · Pass ${completedPasses + 1} of ${repeatCount}`;
+      } else {
+        repeatStatus.textContent = `Repeat · ${countLabel}`;
+      }
+    }
+
+    repeatDecBtn.addEventListener("click", () => {
+      if (repeatCount === Infinity) {
+        repeatCount = 5;
+      } else {
+        repeatCount = Math.max(1, repeatCount - 1);
+      }
+      updateRepeatUI();
+    });
+
+    repeatIncBtn.addEventListener("click", () => {
+      if (repeatCount === Infinity) {
+        repeatCount = 2;
+      } else {
+        repeatCount = Math.min(99, repeatCount + 1);
+      }
+      updateRepeatUI();
+    });
+
+    repeatInfBtn.addEventListener("click", () => {
+      repeatCount = repeatCount === Infinity ? 1 : Infinity;
+      updateRepeatUI();
+    });
+
+    function ensureAudioContext() {
+      if (!audioCtx) {
+        const Ctx = window.AudioContext || window.webkitAudioContext;
+        audioCtx = new Ctx({ sampleRate: 24000 });
+        masterGain = audioCtx.createGain();
+        masterGain.gain.value = 1.45;
+        masterGain.connect(audioCtx.destination);
+      }
+      if (audioCtx.state === "suspended") {
+        audioCtx.resume();
+      }
+    }
+
+    function normalizeAudioSamples(samples) {
+      let peak = 0;
+      for (let i = 0; i < samples.length; i++) {
+        const a = Math.abs(samples[i]);
+        if (a > peak) peak = a;
+      }
+      if (peak > 0.01 && peak < 0.88) {
+        const scale = 0.92 / peak;
+        const out = new Float32Array(samples.length);
+        for (let i = 0; i < samples.length; i++) {
+          out[i] = Math.max(-1, Math.min(1, samples[i] * scale));
+        }
+        return out;
+      }
+      return samples;
+    }
+
+    /**
+     * Declarative json-render reconciler
+     */
+    const JSON_RENDER_COMPONENTS = {
+      AffirmationCard(props, existingEl) {
+        const el = existingEl || document.createElement("article");
+        if (!existingEl) {
+          el.className = "aff-card";
+          el.dataset.cardId = String(props.id);
+          const staggerMs = typeof props.id === "number" ? props.id * 65 : 0;
+          el.style.setProperty("--stagger", `${staggerMs}ms`);
+          el.innerHTML = `
+            <span class="aff-num"></span>
+            <div class="aff-body">
+              <p class="aff-text"></p>
+              <span class="aff-science"></span>
+            </div>
+            <span class="aff-badge">
+              <span class="voice-bars" aria-hidden="true"><i></i><i></i><i></i></span>
+              <span class="badge-label"></span>
+            </span>
+            <div class="aff-progress" aria-hidden="true"></div>
+          `;
+          el.addEventListener("click", () => {
+            if (props.id === "warmup") return;
+            replayFromCard(props.id);
+          });
+        }
+        const isSpeaking = activeSpeakingId === props.id;
+        const isStreaming = props.status === "streaming";
+
+        if (isSpeaking && !el.classList.contains("speaking")) {
+          el.style.setProperty("--speak-ms", `${activeSpeakDurationMs}ms`);
+        }
+
+        el.classList.toggle("speaking", isSpeaking);
+        el.classList.toggle("streaming", isStreaming && !isSpeaking);
+        el.querySelector(".aff-num").textContent =
+          typeof props.index === "number" ? String(props.index).padStart(2, "0") : "··";
+        el.querySelector(".aff-text").textContent = props.text;
+        const sciEl = el.querySelector(".aff-science");
+        if (props.science) {
+          sciEl.textContent = props.science;
+          sciEl.style.display = "block";
+        } else {
+          sciEl.style.display = "none";
+        }
+        el.querySelector(".badge-label").textContent = isSpeaking
+          ? "speaking"
+          : isStreaming
+          ? "streaming"
+          : "speak";
+        return el;
+      },
+    };
+
+    function jsonRender(spec, container) {
+      if (!spec || spec.component !== "CardStream") return;
+      currentSpec = spec;
+      const children = spec.children || [];
+
+      if (children.some((c) => c.props.id !== "warmup")) {
+        const warmupEl = container.querySelector('[data-card-id="warmup"]');
+        if (warmupEl) warmupEl.remove();
+      }
+
+      const validIds = new Set(children.map((c) => String(c.props.id)));
+      container.querySelectorAll("[data-card-id]").forEach((node) => {
+        if (!validIds.has(node.dataset.cardId)) node.remove();
+      });
+
+      children.forEach((node) => {
+        const fn = JSON_RENDER_COMPONENTS[node.component];
+        if (!fn) return;
+        const existing = container.querySelector(`[data-card-id="${node.props.id}"]`);
+        const dom = fn(node.props, existing);
+        if (!existing) container.appendChild(dom);
+      });
+    }
+
+    function updateSpeakingHighlight(id, durationMs = 2800) {
+      activeSpeakingId = id;
+      activeSpeakDurationMs = durationMs;
+      if (currentSpec) jsonRender(currentSpec, root);
+      updateRepeatUI();
+    }
+
+    function stopAllAudio() {
+      audioQueue = [];
+      if (currentSource) {
+        try {
+          currentSource.onended = null;
+          currentSource.stop();
+        } catch (_) {}
+        currentSource = null;
+      }
+      isPlaying = false;
+      updateSpeakingHighlight(-1);
+    }
+
+    function cacheAudioChunk(index, chunk) {
+      if (!cardAudioChunks.has(index)) {
+        cardAudioChunks.set(index, []);
+      }
+      cardAudioChunks.get(index).push(chunk);
+    }
+
+    function enqueueAudio(item) {
+      if (item.genId !== undefined && item.genId !== currentGenId) return;
+      audioQueue.push(item);
+      if (!isPlaying) {
+        playNextInQueue();
+      }
+    }
+
+    function checkAndScheduleRepeatPass() {
+      if (!generationComplete || !currentSpec) return false;
+      const maxPasses = repeatCount;
+      if (completedPasses + 1 >= maxPasses) return false;
+
+      completedPasses += 1;
+      const nodes = (currentSpec.children || []).filter((c) => typeof c.props.id === "number");
+      if (nodes.length === 0) return false;
+
+      for (const node of nodes) {
+        const idx = node.props.id;
+        const chunks = cardAudioChunks.get(idx);
+        if (chunks && chunks.length > 0) {
+          chunks.forEach((ch, cIdx) => {
+            audioQueue.push({
+              genId: currentGenId,
+              index: idx,
+              text: node.props.text,
+              samples: ch.samples,
+              sampleRate: ch.sampleRate,
+              isLastClause: cIdx === chunks.length - 1,
+            });
+          });
+        }
+      }
+      return audioQueue.length > 0;
+    }
+
+    async function playNextInQueue() {
+      if (audioQueue.length === 0) {
+        if (checkAndScheduleRepeatPass()) {
+          await new Promise((r) => setTimeout(r, 520));
+          if (audioQueue.length > 0) {
+            playNextInQueue();
+            return;
+          }
+        }
+        isPlaying = false;
+        updateSpeakingHighlight(-1);
+        return;
+      }
+
+      isPlaying = true;
+      const item = audioQueue.shift();
+      if (item.genId !== undefined && item.genId !== currentGenId) {
+        playNextInQueue();
+        return;
+      }
+
+      if (item.samples && item.samples.length > 0) {
+        ensureAudioContext();
+        const sr = item.sampleRate || 24000;
+        const durMs = Math.round((item.samples.length / sr) * 1000);
+        updateSpeakingHighlight(item.index, durMs);
+
+        await new Promise((resolve) => {
+          const buf = audioCtx.createBuffer(1, item.samples.length, sr);
+          buf.copyToChannel(item.samples, 0);
+          const src = audioCtx.createBufferSource();
+          src.buffer = buf;
+          src.connect(masterGain || audioCtx.destination);
+          currentSource = src;
+          src.onended = () => {
+            currentSource = null;
+            setTimeout(resolve, item.isLastClause === false ? 55 : 190);
+          };
+          src.start(0);
+        });
+      }
+
+      playNextInQueue();
+    }
+
+    async function loadPrebakedWav(url) {
+      if (wavBufferCache.has(url)) return wavBufferCache.get(url);
+      ensureAudioContext();
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const arr = await res.arrayBuffer();
+      const decoded = await audioCtx.decodeAudioData(arr);
+      const raw = decoded.getChannelData(0);
+      const samples = normalizeAudioSamples(new Float32Array(raw));
+      const payload = { samples, sampleRate: decoded.sampleRate };
+      wavBufferCache.set(url, payload);
+      return payload;
+    }
+
+    function splitIntoClauses(sentence) {
+      const parts = sentence
+        .split(/(?<=[,;—–.!?])\s+/)
+        .map((s) => s.trim())
+        .filter((s) => s.length > 0);
+      if (parts.length <= 1) return [sentence];
+      const merged = [];
+      for (const p of parts) {
+        if (merged.length > 0 && p.split(/\s+/).length < 3) {
+          merged[merged.length - 1] += " " + p;
+        } else {
+          merged.push(p);
+        }
+      }
+      return merged;
+    }
+
+    async function synthesizeAndStreamCard(genId, index, text, prebakedAudioUrl = null) {
+      if (genId !== currentGenId) return;
+
+      if (prebakedAudioUrl) {
+        try {
+          const { samples, sampleRate } = await loadPrebakedWav(prebakedAudioUrl);
+          if (genId !== currentGenId) return;
+          cacheAudioChunk(index, { samples, sampleRate });
+          enqueueAudio({
+            genId,
+            index,
+            text,
+            samples,
+            sampleRate,
+            isLastClause: true,
+          });
+          return;
+        } catch (_) {}
+      }
+
+      await initTTSPreload();
+      if (genId !== currentGenId) return;
+
+      const clauses = splitIntoClauses(text);
+      for (let cIdx = 0; cIdx < clauses.length; cIdx++) {
+        if (genId !== currentGenId) return;
+        const clause = clauses[cIdx];
+        const isLastClause = cIdx === clauses.length - 1;
+        try {
+          const res = await ttsClient.run("text-to-speech", clause, {
+            voice: "af_heart",
+            speed: 1.0,
+          });
+          if (genId !== currentGenId || !res || res.aborted) return;
+          if (res.audio && res.audio.length > 0) {
+            const raw =
+              res.audio instanceof Float32Array ? res.audio : new Float32Array(res.audio);
+            const samples = normalizeAudioSamples(raw);
+            const sampleRate = res.sampling_rate || 24000;
+            cacheAudioChunk(index, { samples, sampleRate });
+            enqueueAudio({
+              genId,
+              index,
+              text: clause,
+              samples,
+              sampleRate,
+              isLastClause,
+            });
+          }
+        } catch (err) {
+          console.error("Kokoro-82M TTS error:", err);
+        }
+      }
+    }
+
+    function replayFromCard(startId) {
+      stopAllAudio();
+      ttsClient.interrupt();
+      completedPasses = 0;
+      if (!currentSpec) return;
+
+      const nodes = (currentSpec.children || []).filter(
+        (c) => typeof c.props.id === "number" && c.props.id >= startId
+      );
+      for (const node of nodes) {
+        const idx = node.props.id;
+        const chunks = cardAudioChunks.get(idx);
+        if (chunks && chunks.length > 0) {
+          chunks.forEach((ch, cIdx) => {
+            enqueueAudio({
+              genId: currentGenId,
+              index: idx,
+              text: node.props.text,
+              samples: ch.samples,
+              sampleRate: ch.sampleRate,
+              isLastClause: cIdx === chunks.length - 1,
+            });
+          });
+        } else {
+          synthesizeAndStreamCard(currentGenId, idx, node.props.text);
+        }
+      }
+    }
+
+    async function runPrecookedSample(genId, sampleKey, targetCount) {
+      const sample = PRECOOKED_SCENARIOS[sampleKey];
+      if (!sample) return;
+
+      const count = Math.max(1, Math.min(10, targetCount || selectedCardCount));
+      const items = sample.affirmations.slice(0, count);
+      const streamedTexts = items.map(() => "");
+
+      synthesizeAndStreamCard(genId, 0, items[0].text, items[0].audioUrl);
+
+      for (let i = 0; i < items.length; i++) {
+        if (genId !== currentGenId) return;
+        if (i > 0) {
+          synthesizeAndStreamCard(genId, i, items[i].text, items[i].audioUrl);
+        }
+
+        const words = items[i].text.split(" ");
+        for (let w = 0; w < words.length; w++) {
+          if (genId !== currentGenId) return;
+          streamedTexts[i] = words.slice(0, w + 1).join(" ");
+          const children = [];
+          for (let k = 0; k <= i; k++) {
+            children.push({
+              component: "AffirmationCard",
+              props: {
+                id: k,
+                index: k + 1,
+                text: streamedTexts[k],
+                science: items[k].science,
+                status: k < i || w === words.length - 1 ? "complete" : "streaming",
+              },
+            });
+          }
+          jsonRender(
+            {
+              component: "CardStream",
+              props: { scenario: sample.query, count: items.length },
+              children,
+            },
+            root
+          );
+          await new Promise((r) => setTimeout(r, 26));
+        }
+      }
+
+      if (genId === currentGenId) {
+        generationComplete = true;
+      }
+    }
+
+    function cleanAffirmationText(raw) {
+      return raw
+        .replace(/^\s*[\d]+[\.\)\-\:]\s*/, "")
+        .replace(/^[-*•]\s*/, "")
+        .replace(/^["'“”‘’*]+|["'“”‘’*]+$/g, "")
+        .replace(/\s+/g, " ")
+        .trim();
+    }
+
+    function isUniqueEnough(candidate, existingList) {
+      const norm = (s) =>
+        s
+          .toLowerCase()
+          .replace(/[^a-z0-9\s]/g, "")
+          .split(/\s+/)
+          .filter((w) => w.length > 2);
+      const candWords = new Set(norm(candidate));
+      if (candWords.size < 4) return false;
+      for (const prev of existingList) {
+        const prevWords = new Set(norm(prev));
+        let overlap = 0;
+        for (const w of candWords) {
+          if (prevWords.has(w)) overlap++;
+        }
+        const union = new Set([...candWords, ...prevWords]).size;
+        if (union > 0 && overlap / union > 0.45) {
+          return false;
+        }
+      }
+      return true;
+    }
+
+    function parseScenarioAndCount(rawQuery) {
+      let count = selectedCardCount;
+      let scenario = rawQuery.trim();
+      const lead = scenario.match(/^(\d{1,2})\s+(?:affirmations?\s+(?:for|on|about|to)\s+)?(.+)$/i);
+      const trail = scenario.match(/^(.+?)[,\s]+(\d{1,2})\s*(?:affirmations?)?$/i);
+      if (lead) {
+        count = Math.max(1, Math.min(10, parseInt(lead[1], 10)));
+        scenario = lead[2].trim();
+        selectedCardCount = count;
+        updateCountUI();
+      } else if (trail) {
+        scenario = trail[1].trim();
+        count = Math.max(1, Math.min(10, parseInt(trail[2], 10)));
+        selectedCardCount = count;
+        updateCountUI();
+      }
+      return { scenario, count: Math.max(1, Math.min(10, count)) };
+    }
+
+    function initTTSPreload() {
+      if (ttsLoadPromise) return ttsLoadPromise;
+      ttsLoadPromise = ttsClient
+        .load({
+          task: "text-to-speech",
+          modelId: TTS_MODEL_ID,
+          dtype: "q8",
+          device: "wasm",
+        })
+        .then(() => {
+          ttsReady = true;
+        })
+        .catch(() => {});
+      return ttsLoadPromise;
+    }
+
+    function initLLMPreload() {
+      if (llmLoadPromise) return llmLoadPromise;
+      llmLoadPromise = (async () => {
+        if (!localfirstTelemetry) {
+          await probeHardwareAndSelectModel();
+        }
+
+        // Build fallback order starting from the localfirst-selected tier down to SmolLM2-135M (92MB)
+        const startIdx = LIGHTWEIGHT_MODEL_TIERS.findIndex(
+          (t) => t.key === selectedModelTier.key
+        );
+        const fallbackOrder = [
+          selectedModelTier,
+          ...LIGHTWEIGHT_MODEL_TIERS.slice(0, Math.max(0, startIdx)).reverse(),
+        ];
+
+        for (const candidate of fallbackOrder) {
+          try {
+            selectedModelTier = candidate;
+            updateDeviceBadgeUI("loading", 0);
+
+            await llmClient.load({
+              task: "text-generation",
+              modelId: candidate.modelId,
+              device: selectedBackend,
+              dtype: candidate.dtype,
+              onProgress: (ev) => {
+                if (!llmReady && ev.status === "downloading") {
+                  updateDeviceBadgeUI("loading", ev.percent || 0);
+                  if (currentGenId > 0 && !activeSampleKey) {
+                    const loadedMB = ((ev.loaded || 0) / 1048576).toFixed(1);
+                    const totalMB = ev.total
+                      ? ((ev.total || 0) / 1048576).toFixed(1)
+                      : candidate.sizeMB;
+                    jsonRender(
+                      {
+                        component: "CardStream",
+                        children: [
+                          {
+                            component: "AffirmationCard",
+                            props: {
+                              id: "warmup",
+                              index: "··",
+                              text: `Loading ${candidate.shortName} (${candidate.sizeMB}MB) via localfirst + webml-kit (${ev.percent || 0}% · ${loadedMB}/${totalMB} MB)...`,
+                              science: `LOCALFIRST · ${candidate.tierName.toUpperCase()}`,
+                              status: "streaming",
+                            },
+                          },
+                        ],
+                      },
+                      root
+                    );
+                  }
+                }
+              },
+            });
+
+            llmReady = true;
+            updateDeviceBadgeUI("ready");
+            return;
+          } catch (err) {
+            console.warn(
+              `[localfirst] ${candidate.shortName} failed on ${selectedBackend}, falling back to lighter model:`,
+              err
+            );
+            selectedBackend = "wasm";
+          }
+        }
+      })();
+      return llmLoadPromise;
+    }
+
+    async function runScenarioGeneration(genId, rawQuery) {
+      const { scenario, count } = parseScenarioAndCount(rawQuery);
+      if (!scenario) return;
+
+      const normalizedQuery = scenario.toLowerCase();
+      for (const [key, sample] of Object.entries(PRECOOKED_SCENARIOS)) {
+        if (normalizedQuery === sample.query.toLowerCase()) {
+          activeSampleKey = key;
+          await runPrecookedSample(genId, key, count);
+          return;
+        }
+      }
+
+      await initLLMPreload();
+      if (genId !== currentGenId) return;
+
+      const finalizedCards = [];
+
+      const renderLiveState = (streamingText = null, streamingLens = null) => {
+        if (genId !== currentGenId) return;
+        const children = finalizedCards.map((item, idx) => ({
+          component: "AffirmationCard",
+          props: {
+            id: idx,
+            index: idx + 1,
+            text: item.text,
+            science: item.science,
+            status: "complete",
+          },
+        }));
+
+        if (streamingText && children.length < count) {
+          const nextIdx = children.length;
+          children.push({
+            component: "AffirmationCard",
+            props: {
+              id: nextIdx,
+              index: nextIdx + 1,
+              text: streamingText,
+              science: streamingLens,
+              status: "streaming",
+            },
+          });
+        }
+
+        jsonRender(
+          {
+            component: "CardStream",
+            props: { scenario, count },
+            children,
+          },
+          root
+        );
+      };
+
+      try {
+        for (let cardIdx = 0; cardIdx < count; cardIdx++) {
+          if (genId !== currentGenId) return;
+          const lens = SCIENCE_LENSES[cardIdx % SCIENCE_LENSES.length];
+          const avoidClause =
+            finalizedCards.length > 0
+              ? `\nDo NOT repeat these words or ideas:\n- ${finalizedCards
+                  .slice(-3)
+                  .map((c) => c.text)
+                  .join("\n- ")}`
+              : "";
+
+          const messages = [
+            {
+              role: "system",
+              content:
+                "You write one single, evidence-based, first-person affirmation grounded in behavioral neuroscience and cognitive psychology.\n" +
+                "Rules:\n" +
+                "- Output ONLY one single sentence (12 to 20 words) in first person ('I...' or 'My...' or 'With each...').\n" +
+                "- Never use toxic positivity, clichés, or vague wishes.\n" +
+                "- Do not include numbers, quotes, or extra commentary.",
+            },
+            {
+              role: "user",
+              content:
+                `Situation: "${scenario}"\n` +
+                `Scientific lens (${lens.tag}): ${lens.cue}${avoidClause}\n` +
+                `Write 1 specific first-person sentence for this lens:`,
+            },
+          ];
+
+          let rawCardText = "";
+          const tokenStream = llmClient.stream(messages, {
+            maxNewTokens: 28,
+            doSample: false,
+          });
+
+          for await (const { token } of tokenStream) {
+            if (genId !== currentGenId) return;
+            rawCardText += token;
+            const firstLine = cleanAffirmationText(rawCardText.split(/\r?\n/)[0] || "");
+            const firstSentence = (firstLine.match(/^[^.!?]+[.!?]?/) || [firstLine])[0].trim();
+            if (firstSentence) {
+              renderLiveState(firstSentence, lens.tag);
+            }
+          }
+
+          if (genId !== currentGenId) return;
+          const rawLine = cleanAffirmationText(rawCardText.split(/\r?\n/)[0] || "");
+          let finalSentence = (rawLine.match(/^[^.!?]+[.!?]?/) || [rawLine])[0].trim();
+          if (finalSentence && !/[.!?]$/.test(finalSentence)) {
+            finalSentence += ".";
+          }
+
+          if (!finalSentence || !isUniqueEnough(finalSentence, finalizedCards.map((c) => c.text))) {
+            const fallbackTemplates = [
+              `I narrow my attention to the single next verifiable step in ${scenario}.`,
+              `The physical alertness I feel during ${scenario} is fuel sharpening my clarity.`,
+              `My steadiness in ${scenario} comes from my preparation and values, not external noise.`,
+              `I observe urgency around ${scenario} as data, never as a reason to rush my judgment.`,
+              `With one slow exhale, my nervous system settles so I can navigate ${scenario} deliberately.`,
+              `Every obstacle inside ${scenario} gives me diagnostic feedback that refines my approach.`,
+              `I protect unfragmented focus while working through ${scenario} one layer at a time.`,
+              `I speak to myself with objective calm and precision throughout ${scenario}.`,
+              `I separate what I can control right now in ${scenario} from what can wait.`,
+              `Steady, methodical progress in ${scenario} is enough for this moment.`,
+            ];
+            finalSentence = fallbackTemplates[cardIdx % fallbackTemplates.length];
+          }
+
+          finalizedCards.push({ text: finalSentence, science: lens.tag });
+          renderLiveState(null, null);
+
+          synthesizeAndStreamCard(genId, cardIdx, finalSentence);
+        }
+
+        if (genId === currentGenId) {
+          generationComplete = true;
+        }
+      } catch (err) {
+        if (genId === currentGenId) {
+          console.error("localfirst / webml-kit generation error:", err);
+        }
+      }
+    }
+
+    function startScenario(query, sampleKey = null) {
+      currentGenId += 1;
+      const genId = currentGenId;
+      generationComplete = false;
+      completedPasses = 0;
+      activeSampleKey = sampleKey;
+
+      ensureAudioContext();
+      stopAllAudio();
+
+      llmClient.interrupt();
+      ttsClient.interrupt();
+
+      cardAudioChunks.clear();
+      currentSpec = null;
+      root.innerHTML = "";
+
+      document.querySelectorAll(".sample-chip").forEach((chip) => {
+        chip.classList.toggle("active", chip.dataset.sample === sampleKey);
+      });
+
+      if (sampleKey && PRECOOKED_SCENARIOS[sampleKey]) {
+        runPrecookedSample(genId, sampleKey, selectedCardCount);
+        return;
+      }
+
+      jsonRender(
+        {
+          component: "CardStream",
+          children: [
+            {
+              component: "AffirmationCard",
+              props: {
+                id: "warmup",
+                index: "··",
+                text: llmReady
+                  ? `Streaming ${selectedCardCount} science-backed affirmations via ${selectedModelTier.shortName}...`
+                  : `Warming up ${selectedModelTier.shortName} (${selectedModelTier.sizeMB}MB) via localfirst...`,
+                science: `LOCALFIRST · ${selectedModelTier.tierName.toUpperCase()}`,
+                status: "streaming",
+              },
+            },
+          ],
+        },
+        root
+      );
+
+      runScenarioGeneration(genId, query);
+    }
+
+    form.addEventListener("submit", (e) => {
+      e.preventDefault();
+      const query = input.value.trim();
+      if (!query) return;
+      startScenario(query, null);
+    });
+
+    document.querySelectorAll(".sample-chip").forEach((chip) => {
+      chip.addEventListener("click", () => {
+        const key = chip.dataset.sample;
+        const sample = PRECOOKED_SCENARIOS[key];
+        if (!sample) return;
+        input.value = sample.query;
+        startScenario(sample.query, key);
+      });
+    });
+
+    // Startup: Probe hardware via @ondevice/localfirst detect() & browser-llm-fit fit()
+    // On mobile, serialize loading so two ONNX models never compile simultaneously.
+    (async () => {
+      await probeHardwareAndSelectModel();
+      await initLLMPreload();
+      if (!isMobileDevice) {
+        initTTSPreload();
+      }
+    })();
+  </script>
+</body>
+</html>
