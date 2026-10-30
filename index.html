@@ -3001,23 +3001,27 @@
       }
 
       // Unified LFM3-Omni-2B WebGPU path: stream 24kHz PCM directly from the omni model
-      if (selectedModelTier.engine === "lfm3-omni" && lfm3Session && !lfm3Model?.lost) {
+      if (selectedModelTier.engine === "lfm3-omni" && !lfm3Model?.lost) {
         try {
-          const sr = lfm3Model.audio_sampling_rate || 24000;
-          const merged = await runLfm3PureTTS(text, null, (pcmChunk, chunkSr) => {
-            if (genId !== currentGenId) return;
-            enqueueAudio({
-              genId,
-              index,
-              text,
-              samples: pcmChunk,
-              sampleRate: chunkSr,
-              isStreamChunk: true,
+          await initLLMPreload();
+          if (genId !== currentGenId) return;
+          if (lfm3Session && lfm3Model && !lfm3Model.lost) {
+            const sr = lfm3Model.audio_sampling_rate || 24000;
+            const merged = await runLfm3PureTTS(text, null, (pcmChunk, chunkSr) => {
+              if (genId !== currentGenId) return;
+              enqueueAudio({
+                genId,
+                index,
+                text,
+                samples: pcmChunk,
+                sampleRate: chunkSr,
+                isStreamChunk: true,
+              });
             });
-          });
-          if (genId === currentGenId && merged.length > 0) {
-            cardAudioChunks.set(index, [{ samples: merged, sampleRate: sr }]);
-            return;
+            if (genId === currentGenId && merged.length > 0) {
+              cardAudioChunks.set(index, [{ samples: merged, sampleRate: sr }]);
+              return;
+            }
           }
         } catch (err) {
           if (err?.name === "AbortError") return;
@@ -3026,7 +3030,8 @@
       }
 
       // Fallback / Lightweight path: Kokoro-82M-v1.0-ONNX (q8 WASM)
-      if (!ttsReady) {
+      if (!isKokoroWorkerReady()) {
+        ttsReady = false;
         ttsLoadingCardId = index;
         if (currentSpec) jsonRender(currentSpec, root);
       }
@@ -3035,7 +3040,7 @@
         ttsLoadingCardId = -1;
         if (currentSpec) jsonRender(currentSpec, root);
       }
-      if (genId !== currentGenId || !ttsReady) return;
+      if (genId !== currentGenId || !isKokoroWorkerReady()) return;
 
       const clauses = splitIntoClauses(text);
       for (let cIdx = 0; cIdx < clauses.length; cIdx++) {
@@ -3043,6 +3048,10 @@
         const clause = clauses[cIdx];
         const isLastClause = cIdx === clauses.length - 1;
         try {
+          if (!isKokoroWorkerReady()) {
+            await initTTSPreload();
+            if (genId !== currentGenId || !isKokoroWorkerReady()) return;
+          }
           const res = await ttsClient.run("text-to-speech", clause, {
             voice: "af_heart",
             speed: 1.0,
@@ -3064,6 +3073,10 @@
             });
           }
         } catch (err) {
+          if (String(err?.message || err).includes("No pipeline loaded")) {
+            ttsReady = false;
+            ttsLoadPromise = null;
+          }
           console.error("Kokoro-82M TTS error:", err);
         }
       }
@@ -3205,8 +3218,13 @@
       return { scenario, count: Math.max(1, Math.min(10, count)) };
     }
 
+    function isKokoroWorkerReady() {
+      return Boolean(ttsReady && ttsClient?.worker && ttsClient.loadedModels?.size > 0);
+    }
+
     function initTTSPreload() {
-      if (ttsReady) return Promise.resolve();
+      if (isKokoroWorkerReady()) return Promise.resolve();
+      ttsReady = false;
       if (ttsLoadPromise) return ttsLoadPromise;
       ttsLoadPromise = ttsClient
         .load({
@@ -3224,11 +3242,13 @@
           },
         })
         .then(() => {
-          ttsReady = true;
+          ttsReady = Boolean(ttsClient?.worker && ttsClient.loadedModels?.size > 0);
+          ttsLoadPromise = null;
           ttsLoadingPercent = null;
         })
         .catch((err) => {
           console.warn("[Kokoro-82M] TTS preload failed, will retry on next request:", err);
+          ttsReady = false;
           ttsLoadPromise = null;
           ttsLoadingPercent = null;
         });
@@ -3263,7 +3283,6 @@
             if (candidate.engine === "lfm3-omni") {
               if (lfm3Model && lfm3Session && !lfm3Model.lost) {
                 llmReady = true;
-                ttsReady = true;
                 updateDeviceBadgeUI("ready");
                 return;
               }
@@ -3326,7 +3345,6 @@
 
               lfm3Session = lfm3Model.create_session();
               llmReady = true;
-              ttsReady = true;
               updateDeviceBadgeUI("ready");
               return;
             }
