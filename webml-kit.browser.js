@@ -256,11 +256,14 @@ var ModelClient = class {
         break;
       }
       case "ready": {
+        this.loadedModels.clear();
         this.loadedModels.add(msg.modelKey);
         this.emit("ready", { modelKey: msg.modelKey });
-        const pending = this.pendingRequests.get("load");
+        const reqKey = msg.id || "load";
+        const pending = this.pendingRequests.get(reqKey) || this.pendingRequests.get("load");
         if (pending) {
           pending.resolve(void 0);
+          this.pendingRequests.delete(reqKey);
           this.pendingRequests.delete("load");
         }
         break;
@@ -361,9 +364,10 @@ var ModelClient = class {
       device: options.device,
       revision: options.revision
     };
+    const id = `load_${this.nextId()}`;
     return new Promise((resolve, reject) => {
-      this.pendingRequests.set("load", { resolve, reject });
-      this.send({ type: "load", config });
+      this.pendingRequests.set(id, { resolve, reject });
+      this.send({ type: "load", id, config });
     });
   }
   /**

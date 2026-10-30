@@ -14,7 +14,7 @@
         "@ondevice/localfirst": "./localfirst.browser.js",
         "@ondevice/localfirst/detect": "./localfirst.browser.js",
         "browser-llm-fit": "./browser-llm-fit.browser.js",
-        "webml-kit": "./webml-kit.browser.js",
+        "webml-kit": "./webml-kit.browser.js?v=6",
         "lfm3-omni": "./Lfm3OmniForConditionalGeneration.js"
       }
     }
@@ -1561,8 +1561,8 @@
       },
     };
 
-    const llmClient = new ModelClient("./model-worker.js");
-    const ttsClient = new ModelClient("./model-worker.js");
+    const llmClient = new ModelClient("./model-worker.js?v=6");
+    const ttsClient = new ModelClient("./model-worker.js?v=6");
 
     const root = document.getElementById("jsonRenderRoot");
     const input = document.getElementById("scenarioInput");
@@ -1604,6 +1604,7 @@
     let ttsReady = false;
     let llmLoadPromise = null;
     let ttsLoadPromise = null;
+    let ttsSynthesisChain = Promise.resolve();
     let llmLoadAbortController = null;
     let generationComplete = false;
     let activeSampleKey = null;
@@ -1729,24 +1730,22 @@
     }
 
     /**
-     * Detect mobile hardware / viewport and probe optimal model tier
-     * using @ondevice/localfirst `detect()`, `Lfm3Omni.checkAvailability()`, and `browser-llm-fit` `fit()`.
+     * Detect physical handset/tablet hardware (strictly decoupled from desktop window/DevTools width)
+     * and probe optimal model tier using @ondevice/localfirst `detect()`,
+     * `Lfm3Omni.checkAvailability()`, and `browser-llm-fit` `fit()`.
      */
-    function checkIsMobileViewportOrUA() {
+    function checkIsHandsetOrTabletHardware() {
       const params = new URLSearchParams(window.location.search);
       if (params.get("mobile") === "1" || params.get("device") === "mobile") return true;
       if (params.get("mobile") === "0" || params.get("device") === "desktop") return false;
       const ua = navigator.userAgent || "";
-      const mobileUA = /Android|iPhone|iPad|iPod|Mobile|CriOS|FxiOS/i.test(ua);
+      const mobileUA = /Android|iPhone|iPad|iPod|Mobile|CriOS|FxiOS|EdgiOS|OPiOS/i.test(ua);
       const iPadDesktopUA = navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1;
-      const smallViewport = window.matchMedia("(max-width: 768px)").matches;
-      const coarseTouch =
-        window.matchMedia("(pointer: coarse)").matches && window.innerWidth <= 1024;
-      return mobileUA || iPadDesktopUA || smallViewport || coarseTouch;
+      return mobileUA || iPadDesktopUA;
     }
 
     async function probeHardwareAndSelectModel(forcedTierKey = null) {
-      isMobileDevice = checkIsMobileViewportOrUA();
+      isMobileDevice = checkIsHandsetOrTabletHardware();
       const ua = navigator.userAgent || "";
       const isIOSWebView = /CriOS|FxiOS|EdgiOS|OPiOS/i.test(ua);
       const params = new URLSearchParams(window.location.search);
@@ -1775,12 +1774,13 @@
       }
 
       const hasWebGPU = Boolean(localfirstTelemetry?.gpu?.webgpu);
-      // Force WASM on mobile/iOS for ONNX tiers to avoid WebGPU shader memory spikes in WKWebView/Safari
-      selectedBackend = hasWebGPU && !isMobileDevice ? "webgpu" : "wasm";
+      // LFM3-Omni-2B runs unified WebGPU shaders natively; lightweight q4 ONNX fallback tiers
+      // run on WASM SIMD (0ms shader compile, compact q4 weights, zero WebGPU buffer contention).
+      selectedBackend = "wasm";
 
       const navMem = typeof navigator !== "undefined" ? navigator.deviceMemory : undefined;
       const reportedRamGb =
-        navMem || localfirstTelemetry?.memory?.totalGb || (hasWebGPU && !isMobileDevice ? 8 : 4);
+        navMem || (!isMobileDevice && hasWebGPU ? 8 : localfirstTelemetry?.memory?.totalGb || 4);
       // Mobile browsers impose strict per-tab memory ceilings (~3GB effective envelope)
       const effectiveRamGb = isMobileDevice ? Math.min(reportedRamGb, 3) : reportedRamGb;
       const fitGpuMode = hasWebGPU && !isMobileDevice ? "webgpu-f16" : "wasm-cpu";
@@ -1794,20 +1794,19 @@
         if (match) {
           selectedModelTier = match;
         }
-      } else if (
-        isMobileDevice ||
-        !hasWebGPU ||
-        localfirstTelemetry?.models?.llm?.tier === "wasm-simd" ||
-        effectiveRamGb < 4
-      ) {
-        // Mobile / tablet / low-memory / WASM -> ultra-lightweight SmolLM2-135M (92MB q4) + Kokoro-82M
+      } else if (!isMobileDevice && hasWebGPU) {
+        // Any desktop browser with WebGPU prefers Unified LFM3-Omni-2B (Text + 24kHz Speech in 1 pass),
+        // verified directly against WebGPU adapter limits below regardless of docked DevTools width or clamped deviceMemory.
+        selectedModelTier = LIGHTWEIGHT_MODEL_TIERS[3];
+      } else if (isMobileDevice || effectiveRamGb < 4) {
+        // Handset / tablet / low-memory -> ultra-lightweight SmolLM2-135M (92MB q4) + Kokoro-82M
         selectedModelTier = LIGHTWEIGHT_MODEL_TIERS[0];
       } else if (effectiveRamGb < 8) {
-        // Mid-tier 4-6GB WebGPU -> SmolLM2-360M (240MB q4) + Kokoro-82M
+        // Desktop WASM without WebGPU (4-6GB) -> SmolLM2-360M (240MB q4) + Kokoro-82M
         selectedModelTier = LIGHTWEIGHT_MODEL_TIERS[1];
       } else {
-        // Desktop 8GB+ WebGPU -> Flagship LFM3-Omni-2B (Unified Text + 24kHz Speech), with fallback check
-        selectedModelTier = LIGHTWEIGHT_MODEL_TIERS[3];
+        // Desktop WASM without WebGPU (8GB+) -> Qwen2.5-0.5B (350MB q4) + Kokoro-82M
+        selectedModelTier = LIGHTWEIGHT_MODEL_TIERS[2];
       }
 
       // Immediately update badge after <2ms @ondevice/localfirst probe
@@ -1982,7 +1981,7 @@
       const idx = candidates.findIndex((t) => t.key === selectedModelTier.key);
       const nextTier = candidates[(idx + 1) % candidates.length];
       selectedModelTier = nextTier;
-      selectedBackend = hasWebGPU && !isMobileDevice ? "webgpu" : "wasm";
+      selectedBackend = "wasm";
       if (isHandsetOrTabletPlatform()) {
         releaseLlmWorker();
         releaseTtsWorker();
@@ -1994,10 +1993,10 @@
       llmReady = false;
       llmLoadPromise = null;
       updateDeviceBadgeUI("loading", 0);
-      await initLLMPreload();
-      if (selectedModelTier.engine !== "lfm3-omni" && !isHandsetOrTabletPlatform()) {
+      if (nextTier.engine !== "lfm3-omni" && !isHandsetOrTabletPlatform()) {
         initTTSPreload();
       }
+      await initLLMPreload();
     });
 
     function updateCountUI() {
@@ -2291,12 +2290,7 @@
     });
 
     function isHandsetOrTabletPlatform() {
-      if (isMobileDevice) return true;
-      const ua = navigator.userAgent || "";
-      if (/iPhone|iPad|iPod|Android|Mobile|CriOS|FxiOS/i.test(ua)) return true;
-      // iPadOS Safari desktop-mode UA reports MacIntel with multi-touch support
-      if (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1) return true;
-      return false;
+      return checkIsHandsetOrTabletHardware();
     }
 
     function encodePcm16WavBlobUrl(samples, sampleRate = 24000) {
@@ -2914,10 +2908,16 @@
     }
 
     function splitIntoClauses(sentence) {
-      const parts = sentence
+      let parts = sentence
         .split(/(?<=[,;—–.!?])\s+/)
         .map((s) => s.trim())
         .filter((s) => s.length > 0);
+      if (parts.length <= 1 && sentence.split(/\s+/).length > 10) {
+        parts = sentence
+          .split(/\s+(?=(?:while|without|instead of|so that|so I|so my|because|before|after|never|rather than)\b)/i)
+          .map((s) => s.trim())
+          .filter((s) => s.length > 0);
+      }
       if (parts.length <= 1) return [sentence];
       const merged = [];
       for (const p of parts) {
@@ -3082,6 +3082,16 @@
       }
     }
 
+    function enqueueCardSynthesis(genId, index, text, prebakedAudioUrl = null) {
+      ttsSynthesisChain = ttsSynthesisChain
+        .catch(() => {})
+        .then(async () => {
+          if (genId !== currentGenId) return;
+          await synthesizeAndStreamCard(genId, index, text, prebakedAudioUrl);
+        });
+      return ttsSynthesisChain;
+    }
+
     function replayFromCard(startId) {
       if (typeof startId === "number" && startId >= 0) {
         focusedCardId = startId;
@@ -3112,7 +3122,7 @@
             });
           });
         } else {
-          synthesizeAndStreamCard(currentGenId, idx, node.props.text);
+          enqueueCardSynthesis(currentGenId, idx, node.props.text);
         }
       }
     }
@@ -3125,12 +3135,12 @@
       const items = sample.affirmations.slice(0, count);
       const streamedTexts = items.map(() => "");
 
-      synthesizeAndStreamCard(genId, 0, items[0].text, items[0].audioUrl);
+      enqueueCardSynthesis(genId, 0, items[0].text, items[0].audioUrl);
 
       for (let i = 0; i < items.length; i++) {
         if (genId !== currentGenId) return;
         if (i > 0) {
-          synthesizeAndStreamCard(genId, i, items[i].text, items[i].audioUrl);
+          enqueueCardSynthesis(genId, i, items[i].text, items[i].audioUrl);
         }
 
         const words = items[i].text.split(" ");
@@ -3177,6 +3187,18 @@
     }
 
     function isUniqueEnough(candidate, existingList) {
+      if (!candidate) return false;
+      if (/^(situation|scientific lens|lens|rules?|output|write|example)\b/i.test(candidate)) {
+        return false;
+      }
+      if (!/\b(i|i'm|i’m|my|myself)\b/i.test(candidate)) {
+        return false;
+      }
+      if (!/^(i|i'm|i’m|my|with|when|each|every|in\b|even\b|as\b|one\b|steady\b|slow\b)/i.test(candidate.trim())) {
+        return false;
+      }
+      const wordCount = candidate.trim().split(/\s+/).length;
+      if (wordCount < 6 || wordCount > 32) return false;
       const norm = (s) =>
         s
           .toLowerCase()
@@ -3222,16 +3244,27 @@
       return Boolean(ttsReady && ttsClient?.worker && ttsClient.loadedModels?.size > 0);
     }
 
+    window.__affirmationsState = () => ({
+      tier: selectedModelTier?.key || null,
+      engine: selectedModelTier?.engine || null,
+      llmReady,
+      ttsReady,
+      kokoroReady: isKokoroWorkerReady(),
+      isMobileDevice,
+    });
+
     function initTTSPreload() {
       if (isKokoroWorkerReady()) return Promise.resolve();
       ttsReady = false;
       if (ttsLoadPromise) return ttsLoadPromise;
+      const useKokoroWebGPU =
+        Boolean(localfirstTelemetry?.gpu?.webgpu) && !isHandsetOrTabletPlatform();
       ttsLoadPromise = ttsClient
         .load({
           task: "text-to-speech",
           modelId: TTS_MODEL_ID,
-          dtype: "q8",
-          device: "wasm",
+          dtype: useKokoroWebGPU ? "fp32" : "q8",
+          device: useKokoroWebGPU ? "webgpu" : "wasm",
           onProgress: (ev) => {
             if (!ttsReady && ev && ev.status === "downloading") {
               ttsLoadingPercent = typeof ev.percent === "number" ? ev.percent : null;
@@ -3298,13 +3331,17 @@
                 throw new Error(avail?.reason || "WebGPU adapter unsupported for LFM3-Omni-2B");
               }
 
-              const compactMobileContext = isHandsetOrTabletPlatform() || (navigator.deviceMemory && navigator.deviceMemory <= 8);
+              const isHandset = isHandsetOrTabletPlatform();
+              const isConstrainedDesktop =
+                !isHandset && (!navigator.deviceMemory || navigator.deviceMemory <= 8);
+              const omniMaxLength = isHandset ? 512 : isConstrainedDesktop ? 1024 : 2048;
+              const useLeanDecode = isHandset || isConstrainedDesktop;
               lfm3Model = await Lfm3OmniForConditionalGeneration.from_pretrained(
                 candidate.modelId,
                 {
                   signal: loadCtrl.signal,
-                  maxLength: compactMobileContext ? 512 : 2048,
-                  ...(compactMobileContext ? { decodePipelineDepth: 1 } : {}),
+                  maxLength: omniMaxLength,
+                  ...(useLeanDecode ? { decodePipelineDepth: 1 } : {}),
                   onProgress: (ev) => {
                     if (loadCtrl.signal.aborted || llmReady) return;
                     let pct = null;
@@ -3429,6 +3466,9 @@
         }
       }
 
+      if (selectedModelTier.engine !== "lfm3-omni" && !isHandsetOrTabletPlatform()) {
+        initTTSPreload();
+      }
       await initLLMPreload();
       if (genId !== currentGenId) return;
 
@@ -3596,7 +3636,7 @@
                 const merged = normalizeAudioSamples(mergeFloat32Chunks(omniAudioChunks));
                 cardAudioChunks.set(cardIdx, [{ samples: merged, sampleRate: sr }]);
               } else {
-                synthesizeAndStreamCard(genId, cardIdx, finalSentence);
+                enqueueCardSynthesis(genId, cardIdx, finalSentence);
               }
               continue;
             } catch (omniErr) {
@@ -3622,25 +3662,31 @@
             {
               role: "system",
               content:
-                "You write one single, evidence-based, first-person affirmation grounded in behavioral neuroscience and cognitive psychology.\n" +
-                "Rules:\n" +
-                "- Output ONLY one single sentence (12 to 20 words) in first person ('I...' or 'My...' or 'With each...').\n" +
-                "- Never use toxic positivity, clichés, or vague wishes.\n" +
-                "- Do not include numbers, quotes, or extra commentary.",
+                "Write exactly ONE grounded first-person sentence ('I...' or 'My...') of 12 to 20 words applying the psychological lens to the user's situation. Output only the sentence with no labels or quotes.",
             },
             {
               role: "user",
               content:
-                `Situation: "${scenario}"\n` +
-                `Scientific lens (${lens.tag}): ${lens.cue}${avoidClause}\n` +
-                `Write 1 specific first-person sentence for this lens:`,
+                'Situation: "debugging a production incident"\nLens: Narrow attention to one controllable variable.',
+            },
+            {
+              role: "assistant",
+              content:
+                "I isolate one telemetry signal at a time, letting channel noise fade while my judgment stays calm.",
+            },
+            {
+              role: "user",
+              content: `Situation: "${scenario}"\nLens: ${lens.cue}${avoidClause}`,
             },
           ];
 
           let rawCardText = "";
           const tokenStream = llmClient.stream(messages, {
-            maxNewTokens: 28,
-            doSample: false,
+            maxNewTokens: 26,
+            doSample: true,
+            temperature: 0.2,
+            topP: 0.85,
+            repetitionPenalty: 1.12,
           });
 
           for await (const { token } of tokenStream) {
@@ -3667,9 +3713,10 @@
           finalizedCards.push({ text: finalSentence, science: lens.tag });
           renderLiveState(null, null);
 
-          // Desktop streams TTS in parallel per card; mobile defers TTS until LLM worker is freed
+          // Desktop streams TTS sequentially card-by-card as soon as Card 0 finishes text;
+          // mobile defers TTS until LLM worker is freed so two WASM heaps never coexist.
           if (!isHandsetOrTabletPlatform()) {
-            synthesizeAndStreamCard(genId, cardIdx, finalSentence);
+            enqueueCardSynthesis(genId, cardIdx, finalSentence);
           }
         }
 
@@ -3799,6 +3846,9 @@
     (async () => {
       await probeHardwareAndSelectModel();
       if (!isHandsetOrTabletPlatform()) {
+        if (selectedModelTier.engine !== "lfm3-omni") {
+          initTTSPreload();
+        }
         await initLLMPreload();
         if (selectedModelTier.engine !== "lfm3-omni") {
           initTTSPreload();

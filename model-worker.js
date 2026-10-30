@@ -2,12 +2,14 @@
  * webml-kit Browser Worker (model-worker.js)
  *
  * Implements the webml-kit WorkerCommand / WorkerResponse protocol with:
- * - Strict per-pipeline mutex lock (withLock) so two ONNX InferenceSession.run()
- *   calls NEVER overlap ("Error: Session already started" is impossible).
+ * - Single Worker-wide ONNX mutex (withWorkerLock) so NO two ONNX Runtime
+ *   session creations, warmups, disposes, or InferenceSession.run() calls can
+ *   ever overlap inside the Worker's shared WASM/JSEP runtime ("Error: Session
+ *   already started" and "Error: Session mismatch" are structurally impossible).
+ * - One active pipeline per task with clean lock-serialized disposal on model switch.
  * - InterruptableStoppingCriteria + cancelEpoch so interrupting a stream or
- *   queued TTS synthesis drains the queue cleanly before starting new work.
+ *   queued TTS synthesis drains cleanly before starting new work.
  * - Multi-file download progress aggregation.
- * - Support for text-generation (Qwen / SmolLM2 / Llama) and text-to-speech (Kokoro-82M).
  */
 
 const _origWarn = console.warn.bind(console);
@@ -42,18 +44,22 @@ env.allowLocalModels = false;
 env.useBrowserCache = true;
 if (env.backends?.onnx) {
   env.backends.onnx.logLevel = 'error';
-  if (env.backends.onnx.wasm && !self.crossOriginIsolated) {
-    env.backends.onnx.wasm.numThreads = 1;
+  if (env.backends.onnx.wasm) {
+    env.backends.onnx.wasm.proxy = false;
+    if (!self.crossOriginIsolated) {
+      env.backends.onnx.wasm.numThreads = 1;
+    }
   }
 }
 
-const instances = new Map();
-const executionLocks = new Map();
+// Active loaded pipeline per task: Map<task, { key: string, instance: any }>
+const activeByTask = new Map();
 const kvCaches = new Map();
 const stoppingCriteria = new InterruptableStoppingCriteria();
+let workerLock = Promise.resolve();
 let cancelEpoch = 0;
 
-function modelKey(task, modelId) {
+function makeModelKey(task, modelId) {
   return `${task}::${modelId}`;
 }
 
@@ -66,13 +72,13 @@ function send(msg, transfer) {
 }
 
 /**
- * Serializes all async operations on a pipeline so two ONNX session.run()
- * calls can never execute concurrently on the same session/backend.
+ * Serializes ALL ONNX Runtime operations across the entire Worker so two
+ * session.run() / create / dispose calls can never overlap on the shared
+ * ONNX WASM/JSEP runtime state.
  */
-function withLock(key, fn) {
-  const prev = executionLocks.get(key) ?? Promise.resolve();
-  const next = prev.catch(() => {}).then(fn);
-  executionLocks.set(key, next);
+function withWorkerLock(fn) {
+  const next = workerLock.catch(() => {}).then(fn);
+  workerLock = next;
   return next;
 }
 
@@ -148,43 +154,87 @@ function createProgressAggregator() {
   };
 }
 
-async function loadPipeline(config) {
-  const key = modelKey(config.task, config.modelId);
+async function safelyDisposeInstance(inst) {
+  if (!inst) return;
+  try {
+    await inst.dispose?.();
+  } catch {}
+  try {
+    await inst.model?.dispose?.();
+  } catch {}
+}
 
-  if (kvCaches.has(key)) {
-    kvCaches.get(key)?.dispose?.();
-    kvCaches.delete(key);
+async function loadPipeline(config, reqId = 'load') {
+  const key = makeModelKey(config.task, config.modelId);
+
+  if (config.task === 'text-generation') {
+    stoppingCriteria.interrupt();
   }
 
-  if (!instances.has(key)) {
+  await withWorkerLock(async () => {
+    const existing = activeByTask.get(config.task);
+    if (existing && existing.key === key && existing.instance) {
+      send({ type: 'ready', id: reqId, modelKey: key });
+      return;
+    }
+
+    // Cleanly dispose any prior model on this task inside the global lock
+    if (existing) {
+      activeByTask.delete(config.task);
+      if (kvCaches.has(existing.key)) {
+        try {
+          kvCaches.get(existing.key)?.dispose?.();
+        } catch {}
+        kvCaches.delete(existing.key);
+      }
+      await safelyDisposeInstance(existing.instance);
+    }
+
     const onProgress = createProgressAggregator();
 
-    const loadFn = () =>
-      withLock(key, async () => {
-        send({
-          type: 'progress',
-          data: { status: 'downloading', loaded: 0, total: 0, percent: 0 },
-        });
+    try {
+      send({
+        type: 'progress',
+        data: { status: 'downloading', loaded: 0, total: 0, percent: 0 },
+      });
 
-        // Kokoro-82M neural TTS
-        if (config.modelId.toLowerCase().includes('kokoro')) {
-          const { KokoroTTS } = await import(
-            'https://cdn.jsdelivr.net/npm/kokoro-js@1.2.0/+esm'
-          );
-          const tts = await KokoroTTS.from_pretrained(config.modelId, {
-            dtype: config.dtype ?? 'q8',
-            device: config.device ?? 'wasm',
+      let instance;
+      if (config.modelId.toLowerCase().includes('kokoro')) {
+        const { KokoroTTS } = await import(
+          'https://cdn.jsdelivr.net/npm/kokoro-js@1.2.0/+esm'
+        );
+        const wantWebGPU = config.device === 'webgpu';
+        let loadedOnWebGPU = false;
+        try {
+          instance = await KokoroTTS.from_pretrained(config.modelId, {
+            dtype: wantWebGPU ? (config.dtype ?? 'fp32') : (config.dtype ?? 'q8'),
+            device: wantWebGPU ? 'webgpu' : 'wasm',
             progress_callback: onProgress,
           });
-          return tts;
+          loadedOnWebGPU = wantWebGPU;
+        } catch (_) {
+          instance = await KokoroTTS.from_pretrained(config.modelId, {
+            dtype: 'q8',
+            device: 'wasm',
+            progress_callback: onProgress,
+          });
         }
+        // Pre-warm voice embedding + WGSL compute shaders during background load so first speech is <350ms
+        if (loadedOnWebGPU && instance && typeof instance.generate === 'function') {
+          try {
+            await instance.generate('Steady.', { voice: 'af_heart', speed: 1.0 });
+          } catch {}
+        }
+      } else {
+        const preferredDevice = config.device ?? 'wasm';
+        // Transformers.js WebGPU requires q4f16/fp16 rather than CPU-oriented q4 MatMulNBits
+        const preferredDtype =
+          preferredDevice === 'webgpu' && (!config.dtype || config.dtype === 'q4')
+            ? 'q4f16'
+            : config.dtype ?? 'q4';
 
-        const preferredDevice = config.device ?? 'webgpu';
-        const preferredDtype = config.dtype ?? 'q4';
-
-        let pipe;
         try {
-          pipe = await hfPipeline(config.task, config.modelId, {
+          instance = await hfPipeline(config.task, config.modelId, {
             device: preferredDevice,
             dtype: preferredDtype,
             revision: config.revision,
@@ -192,7 +242,7 @@ async function loadPipeline(config) {
             progress_callback: onProgress,
           });
         } catch (_) {
-          pipe = await hfPipeline(config.task, config.modelId, {
+          instance = await hfPipeline(config.task, config.modelId, {
             device: 'wasm',
             dtype: 'q4',
             revision: config.revision,
@@ -201,67 +251,45 @@ async function loadPipeline(config) {
           });
         }
 
-        // Warmup inside loadFn lock so no runInference call can ever overlap warmup
-        if (config.task === 'text-generation' && pipe && 'tokenizer' in pipe) {
+        // Warmup inside global worker lock so no runInference call can ever overlap warmup
+        if (config.task === 'text-generation' && instance && 'tokenizer' in instance) {
           send({
             type: 'progress',
             data: { status: 'compiling', loaded: 0, total: 0, percent: 100 },
           });
           try {
-            const inputs = pipe.tokenizer('a');
-            await pipe.model.generate({
+            const inputs = instance.tokenizer('a');
+            await instance.model.generate({
               ...inputs,
               max_new_tokens: 1,
             });
           } catch {}
         }
+      }
 
-        return pipe;
+      activeByTask.set(config.task, { key, instance });
+      send({ type: 'ready', id: reqId, modelKey: key });
+    } catch (e) {
+      activeByTask.delete(config.task);
+      send({
+        type: 'error',
+        id: reqId,
+        data: e instanceof Error ? e.message : String(e),
       });
-
-    instances.set(key, loadFn());
-  }
-
-  try {
-    await instances.get(key);
-    send({ type: 'ready', modelKey: key });
-  } catch (e) {
-    instances.delete(key);
-    send({
-      type: 'error',
-      id: 'load',
-      data: e instanceof Error ? e.message : String(e),
-    });
-  }
+    }
+  });
 }
 
 async function runInference(id, task, input, options) {
-  let pipelinePromise = null;
-  let matchedKey = '';
-
-  for (const [key, promise] of instances) {
-    if (key.startsWith(`${task}::`)) {
-      pipelinePromise = promise;
-      matchedKey = key;
-      break;
-    }
-  }
-
-  if (!pipelinePromise) {
-    send({ type: 'error', id, data: `No pipeline loaded for task: ${task}` });
-    return;
-  }
-
   const requestEpoch = cancelEpoch;
 
   // If a new text-generation request arrives while an old one is running,
-  // interrupt the active generation so the lock releases after the current token.
+  // interrupt the active generation so the global lock releases after the current token.
   if (task === 'text-generation') {
     stoppingCriteria.interrupt();
   }
 
-  await withLock(matchedKey, async () => {
-    // Skip stale queued requests that were cancelled while waiting for the lock
+  await withWorkerLock(async () => {
     if (requestEpoch !== cancelEpoch) {
       send({
         type: 'result',
@@ -271,23 +299,19 @@ async function runInference(id, task, input, options) {
       return;
     }
 
+    const entry = activeByTask.get(task);
+    if (!entry || !entry.instance) {
+      send({ type: 'error', id, data: `No pipeline loaded for task: ${task}` });
+      return;
+    }
+
+    const pipelineInstance = entry.instance;
+
     try {
-      const pipelineInstance = await pipelinePromise;
-
-      if (requestEpoch !== cancelEpoch) {
-        send({
-          type: 'result',
-          id,
-          data: { text: '', aborted: true, numTokens: 0, tps: 0, timeToFirstToken: 0, totalTime: 0 },
-        });
-        return;
-      }
-
       if (task === 'text-generation') {
         await runTextGeneration(id, pipelineInstance, input, options, requestEpoch);
       } else if (
         task === 'text-to-speech' &&
-        pipelineInstance &&
         typeof pipelineInstance.generate === 'function'
       ) {
         const voice = options?.voice || 'af_heart';
@@ -360,8 +384,7 @@ async function runTextGeneration(id, generator, messages, options, requestEpoch)
     },
   });
 
-  const doSample =
-    options?.doSample ?? options?.do_sample ?? false;
+  const doSample = options?.doSample ?? options?.do_sample ?? false;
 
   const genOptions = {
     max_new_tokens: options?.maxNewTokens ?? options?.max_new_tokens ?? 512,
@@ -408,48 +431,62 @@ async function runTextGeneration(id, generator, messages, options, requestEpoch)
 function resetKVCache() {
   cancelEpoch++;
   stoppingCriteria.interrupt();
-  for (const cache of kvCaches.values()) {
-    cache?.dispose?.();
-  }
-  kvCaches.clear();
+  withWorkerLock(async () => {
+    for (const cache of kvCaches.values()) {
+      try {
+        cache?.dispose?.();
+      } catch {}
+    }
+    kvCaches.clear();
+  });
 }
 
 function disposeModel(targetKey) {
   cancelEpoch++;
   stoppingCriteria.interrupt();
-  if (targetKey) {
-    const p = instances.get(targetKey);
-    p?.then((inst) => inst?.dispose?.());
-    instances.delete(targetKey);
-    if (kvCaches.has(targetKey)) {
-      kvCaches.get(targetKey)?.dispose?.();
-      kvCaches.delete(targetKey);
+  withWorkerLock(async () => {
+    if (targetKey) {
+      for (const [task, entry] of activeByTask.entries()) {
+        if (entry.key === targetKey) {
+          activeByTask.delete(task);
+          await safelyDisposeInstance(entry.instance);
+        }
+      }
+      if (kvCaches.has(targetKey)) {
+        try {
+          kvCaches.get(targetKey)?.dispose?.();
+        } catch {}
+        kvCaches.delete(targetKey);
+      }
+    } else {
+      const entries = Array.from(activeByTask.values());
+      activeByTask.clear();
+      for (const entry of entries) {
+        await safelyDisposeInstance(entry.instance);
+      }
+      for (const cache of kvCaches.values()) {
+        try {
+          cache?.dispose?.();
+        } catch {}
+      }
+      kvCaches.clear();
     }
-  } else {
-    for (const p of instances.values()) {
-      p.then((inst) => inst?.dispose?.());
-    }
-    instances.clear();
-    for (const cache of kvCaches.values()) {
-      cache?.dispose?.();
-    }
-    kvCaches.clear();
-  }
+  });
 }
 
-self.addEventListener('message', async (e) => {
+self.addEventListener('message', (e) => {
   const cmd = e.data;
   if (!cmd || !cmd.type) return;
 
   switch (cmd.type) {
     case 'check':
-      await checkDevice();
+      checkDevice();
       break;
     case 'load':
-      await loadPipeline(cmd.config);
+      loadPipeline(cmd.config, cmd.id);
       break;
     case 'run':
-      await runInference(cmd.id, cmd.task, cmd.input, cmd.options);
+      runInference(cmd.id, cmd.task, cmd.input, cmd.options);
       break;
     case 'interrupt':
       cancelEpoch++;
