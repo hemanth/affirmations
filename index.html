@@ -2711,11 +2711,16 @@
           const nextItem = mobileAudioQueue[0];
           const pauseMs = nextItem && nextItem.index === item.index ? 55 : 200;
           await new Promise((resolve) => {
-            const t = setTimeout(() => {
-              scheduledHighlightTimers.delete(t);
+            let done = false;
+            const finishPause = () => {
+              if (done) return;
+              done = true;
+              clearTimeout(t);
+              if (mobileAbortWait === finishPause) mobileAbortWait = null;
               resolve();
-            }, pauseMs);
-            scheduledHighlightTimers.add(t);
+            };
+            const t = setTimeout(finishPause, pauseMs);
+            mobileAbortWait = finishPause;
           });
         }
       } finally {
