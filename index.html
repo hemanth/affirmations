@@ -451,37 +451,119 @@
       border-radius: 1px;
     }
 
-    /* Mobile & Tablet Responsive Layout */
+    /* Mobile-only UI scaffolding (hidden on desktop >640px) */
+    .mobile-context-bar,
+    .mobile-pre-bar,
+    .focus-stage-footer,
+    .mobile-thumb-dock {
+      display: none;
+    }
+
+    /* Mobile & Tablet Responsive Layout: Sanctuary Focus Card + Toggleable Editorial List */
     @media (max-width: 640px) {
       main {
-        padding: calc(22px + env(safe-area-inset-top, 0px)) 16px calc(72px + env(safe-area-inset-bottom, 0px));
+        min-height: 100vh;
+        min-height: 100dvh;
+        display: flex;
+        flex-direction: column;
+        padding: calc(18px + env(safe-area-inset-top, 0px)) 20px calc(96px + env(safe-area-inset-bottom, 0px));
       }
 
       .header-bar {
+        flex-wrap: nowrap;
+        align-items: baseline;
+        justify-content: space-between;
         margin-bottom: 16px;
-        gap: 8px;
+        gap: 10px;
       }
 
       h1 {
-        font-size: clamp(38px, 10vw, 48px);
+        font-size: clamp(36px, 9.8vw, 42px);
       }
 
       .device-pill {
         font-size: 10px;
         padding: 4px 10px;
+        background: rgba(255, 255, 255, 0.78);
+        flex-shrink: 0;
+      }
+
+      /* Collapsible Topic Pill shown during active Focus Mode */
+      .mobile-context-bar {
+        appearance: none;
+        width: 100%;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        background: rgba(255, 255, 255, 0.82);
+        border: 1px solid var(--border-hairline);
+        border-radius: 13px;
+        padding: 10px 14px;
+        margin-bottom: 14px;
+        cursor: pointer;
+        text-align: left;
+        transition: border-color 150ms ease, background 150ms ease;
+      }
+
+      .mobile-context-bar[hidden] {
+        display: none !important;
+      }
+
+      .mobile-context-bar:active {
+        transform: scale(0.992);
+      }
+
+      .ctx-topic {
+        font-family: var(--font-serif);
+        font-size: 20px;
+        line-height: 1.15;
+        color: var(--text-primary);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      .ctx-edit {
+        font-family: var(--font-mono);
+        font-size: 10px;
+        letter-spacing: 0.02em;
+        color: var(--text-secondary);
+        white-space: nowrap;
+        flex-shrink: 0;
+      }
+
+      /* Collapse prompt & presets smoothly when in active Focus Card mode */
+      body.mobile-prompt-collapsed #scenarioForm,
+      body.mobile-prompt-collapsed .toolbar-row {
+        display: none;
+      }
+
+      form {
+        margin-bottom: 12px;
+      }
+
+      .input-shell {
+        border-radius: 14px;
       }
 
       input {
-        height: 56px;
-        padding: 0 58px 0 16px;
-        font-size: 18px; /* >=16px prevents iOS Safari auto-zoom on focus */
+        height: 52px;
+        padding: 0 52px 0 18px;
+        font-size: 19px; /* >=16px prevents iOS Safari auto-zoom on focus */
       }
 
       .submit-kbd {
-        right: 10px;
-        height: 36px;
-        min-width: 36px;
-        padding: 0 10px;
+        right: 9px;
+        width: 34px;
+        height: 34px;
+        min-width: 34px;
+        padding: 0;
+        border-radius: 10px;
+        background: var(--text-primary);
+        border-color: var(--text-primary);
+        color: var(--bg-surface);
+        font-size: 14px;
       }
 
       .submit-kbd .kbd-label {
@@ -489,17 +571,20 @@
       }
 
       .toolbar-row {
-        gap: 10px;
-        margin-bottom: 20px;
+        gap: 12px;
+        margin-bottom: 16px;
       }
 
       .sample-strip {
-        width: 100%;
+        width: calc(100% + 40px);
+        margin: 0 -20px;
+        padding: 0 20px 2px;
         flex-wrap: nowrap;
         overflow-x: auto;
         -webkit-overflow-scrolling: touch;
         scrollbar-width: none;
-        padding-bottom: 2px;
+        mask-image: linear-gradient(to right, black 82%, transparent 99%);
+        -webkit-mask-image: linear-gradient(to right, black 82%, transparent 99%);
       }
 
       .sample-strip::-webkit-scrollbar {
@@ -508,50 +593,395 @@
 
       .sample-chip {
         flex-shrink: 0;
-        padding: 7px 13px;
-        font-size: 12.5px;
-        min-height: 34px;
+        padding: 6px 13px;
+        font-size: 12px;
+        min-height: 33px;
+        background: rgba(255, 255, 255, 0.72);
       }
 
+      .sample-chip.active {
+        background: var(--text-primary);
+        color: var(--bg-surface);
+      }
+
+      /* Hide 7-button desktop steppers on mobile in favor of clean micro-pills & thumb dock */
       .controls-cluster {
+        display: none;
+      }
+
+      .mobile-pre-bar {
         width: 100%;
+        display: flex;
+        align-items: center;
         justify-content: space-between;
+        padding-bottom: 10px;
+        border-bottom: 1px solid var(--border-hairline);
+      }
+
+      body.mobile-has-cards .mobile-pre-bar {
+        display: none;
+      }
+
+      .pre-label {
+        font-family: var(--font-mono);
+        font-size: 9.5px;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--text-muted);
+      }
+
+      .micro-pills {
+        display: inline-flex;
         gap: 6px;
       }
 
-      .pill-btn {
-        min-height: 32px;
-        min-width: 32px;
+      .mpill {
+        appearance: none;
+        font-family: var(--font-mono);
+        font-size: 10px;
         padding: 4px 10px;
-        font-size: 12px;
+        border-radius: 999px;
+        border: 1px solid var(--border-hairline);
+        background: var(--bg-surface);
+        color: var(--text-secondary);
+        cursor: pointer;
       }
 
-      .card-stream {
-        gap: 11px;
+      .mpill.active-soft {
+        background: var(--pastel-green-bg);
+        border-color: #D2E3CF;
+        color: var(--pastel-green-fg);
       }
 
-      .aff-card {
-        padding: 16px 16px 18px;
+      /* =========================================================
+         MODE 1 (Default): SANCTUARY FOCUS CARD VIEW
+         ========================================================= */
+      body[data-mobile-view="focus"].mobile-has-cards .sanctuary-wrap {
+        margin-top: auto;
+        margin-bottom: auto;
+        position: relative;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 18px;
+        padding: 8px 0;
+      }
+
+      body[data-mobile-view="focus"].mobile-has-cards .sanctuary-wrap::before {
+        content: "";
+        position: absolute;
+        width: 280px;
+        height: 280px;
+        border-radius: 50%;
+        background: radial-gradient(circle, rgba(234, 242, 232, 0.85) 0%, rgba(247, 246, 243, 0) 70%);
+        top: 46%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        pointer-events: none;
+        z-index: 0;
+      }
+
+      body[data-mobile-view="focus"] .card-stream {
+        width: 100%;
+        position: relative;
+        z-index: 1;
+      }
+
+      body[data-mobile-view="focus"] .aff-card:not(.is-focused) {
+        display: none;
+      }
+
+      body[data-mobile-view="focus"] .aff-card.is-focused {
+        background: var(--bg-surface);
+        border: 1px solid var(--border-strong);
+        border-radius: 22px;
+        padding: 26px 24px 24px;
+        box-shadow: 0 20px 50px rgba(17, 17, 17, 0.055);
+        grid-template-columns: 1fr auto;
+        grid-template-areas:
+          "num badge"
+          "body body";
+        gap: 22px;
+        align-items: center;
+      }
+
+      body[data-mobile-view="focus"] .aff-card.is-focused .aff-num {
+        width: auto;
+        height: auto;
+        border: none;
+        background: transparent !important;
+        color: var(--text-muted) !important;
+        font-size: 11px;
+        letter-spacing: 0.06em;
+        justify-content: flex-start;
+      }
+
+      body[data-mobile-view="focus"] .aff-card.is-focused .aff-num::after {
+        content: attr(data-step-total);
+        margin-left: 4px;
+      }
+
+      body[data-mobile-view="focus"] .aff-card.is-focused .aff-body {
+        gap: 18px;
+      }
+
+      body[data-mobile-view="focus"] .aff-card.is-focused .aff-text {
+        font-size: clamp(26px, 7.6vw, 31px);
+        line-height: 1.22;
+        letter-spacing: -0.02em;
+      }
+
+      body[data-mobile-view="focus"] .aff-card.is-focused:not([data-card-id="warmup"]) .aff-text::before {
+        content: "“";
+      }
+
+      body[data-mobile-view="focus"] .aff-card.is-focused:not([data-card-id="warmup"]) .aff-text::after {
+        content: "”";
+      }
+
+      body[data-mobile-view="focus"] .aff-card.is-focused .aff-science {
+        font-size: 9.5px;
+        letter-spacing: 0.06em;
+        padding-top: 12px;
+        border-top: 1.5px solid #ECEAE4;
+      }
+
+      body[data-mobile-view="focus"] .aff-card.is-focused .aff-progress {
+        height: 2.5px;
+      }
+
+      .focus-stage-footer {
+        position: relative;
+        z-index: 1;
+        width: 100%;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 12px;
+      }
+
+      .focus-stage-footer[hidden],
+      body[data-mobile-view="list"] .focus-stage-footer {
+        display: none !important;
+      }
+
+      .step-dots {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 7px;
+      }
+
+      .step-dot {
+        appearance: none;
+        border: none;
+        padding: 0;
+        width: 6px;
+        height: 6px;
+        border-radius: 999px;
+        background: #DAD7CF;
+        cursor: pointer;
+        transition: width 200ms ease, background 200ms ease;
+      }
+
+      .step-dot.done {
+        background: #9E9C96;
+      }
+
+      .step-dot.current {
+        width: 20px;
+        background: var(--text-primary);
+      }
+
+      .next-whisper {
+        font-family: var(--font-serif);
+        font-style: italic;
+        font-size: 16.5px;
+        line-height: 1.3;
+        color: var(--text-muted);
+        text-align: center;
+        max-width: 320px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      /* =========================================================
+         MODE 2 (Toggleable): REFINED EDITORIAL LIST VIEW
+         ========================================================= */
+      body[data-mobile-view="list"] .card-stream {
+        gap: 12px;
+      }
+
+      body[data-mobile-view="list"] .aff-card {
+        padding: 10px 6px;
+        background: transparent;
+        border: 1px solid transparent;
+        box-shadow: none;
+        grid-template-columns: 24px 1fr;
+        grid-template-areas: "num body";
+        gap: 10px;
+        align-items: baseline;
+        opacity: 0.46;
+        transition: opacity 220ms ease, background 220ms ease, padding 220ms ease, border-color 220ms ease;
+      }
+
+      body[data-mobile-view="list"] .aff-card .aff-num {
+        width: auto;
+        height: auto;
+        border: none;
+        background: transparent;
+        font-size: 10px;
+        color: var(--text-muted);
+      }
+
+      body[data-mobile-view="list"] .aff-card .aff-badge,
+      body[data-mobile-view="list"] .aff-card .aff-science {
+        display: none !important;
+      }
+
+      body[data-mobile-view="list"] .aff-card .aff-text {
+        font-size: 21px;
+        line-height: 1.26;
+      }
+
+      body[data-mobile-view="list"] .aff-card.streaming:not(.speaking):not([data-card-id="warmup"]) {
+        opacity: 0.75;
+        border-color: transparent;
+      }
+
+      body[data-mobile-view="list"] .aff-card.speaking,
+      body[data-mobile-view="list"] .aff-card[data-card-id="warmup"] {
+        opacity: 1;
+        background: var(--bg-surface);
+        border: 1px solid var(--text-primary);
+        border-radius: 16px;
+        padding: 18px 18px 20px;
+        box-shadow: 0 12px 32px rgba(17, 17, 17, 0.06);
         grid-template-columns: 28px 1fr auto;
         grid-template-areas:
           "num . badge"
           "body body body";
         gap: 10px;
-        align-items: start;
+        align-items: center;
       }
 
-      .aff-badge {
+      body[data-mobile-view="list"] .aff-card.speaking .aff-num {
+        width: 26px;
+        height: 22px;
+        border-radius: 5px;
+        background: var(--text-primary);
+        color: var(--bg-surface);
+      }
+
+      body[data-mobile-view="list"] .aff-card.speaking .aff-badge,
+      body[data-mobile-view="list"] .aff-card.streaming .aff-badge {
+        display: inline-flex !important;
         justify-self: end;
-        align-self: center;
       }
 
-      .aff-text {
-        font-size: clamp(20px, 5.4vw, 24px);
-        line-height: 1.3;
-      }
-
-      .aff-science {
+      body[data-mobile-view="list"] .aff-card.speaking .aff-science,
+      body[data-mobile-view="list"] .aff-card.streaming .aff-science {
+        display: block !important;
         font-size: 9.5px;
+      }
+
+      body[data-mobile-view="list"] .aff-card.speaking .aff-text {
+        font-size: 24px;
+        line-height: 1.24;
+      }
+
+      /* =========================================================
+         FLOATING THUMB-ZONE DOCK
+         ========================================================= */
+      .mobile-thumb-dock {
+        position: fixed;
+        left: 16px;
+        right: 16px;
+        bottom: calc(14px + env(safe-area-inset-bottom, 0px));
+        z-index: 30;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 6px;
+        background: rgba(255, 255, 255, 0.9);
+        backdrop-filter: blur(16px);
+        -webkit-backdrop-filter: blur(16px);
+        border: 1px solid var(--border-strong);
+        border-radius: 999px;
+        padding: 6px;
+        box-shadow: 0 12px 34px rgba(17, 17, 17, 0.08);
+      }
+
+      .mobile-thumb-dock[hidden] {
+        display: none !important;
+      }
+
+      .dock-pill {
+        appearance: none;
+        border: none;
+        background: var(--bg-canvas);
+        color: var(--text-secondary);
+        font-family: var(--font-mono);
+        font-size: 10.5px;
+        min-height: 38px;
+        padding: 0 12px;
+        border-radius: 999px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 5px;
+        cursor: pointer;
+        white-space: nowrap;
+        flex-shrink: 0;
+      }
+
+      .dock-pill:active,
+      .dock-primary:active {
+        transform: scale(0.97);
+      }
+
+      .dock-pill.dock-active {
+        background: var(--pastel-green-bg);
+        color: var(--pastel-green-fg);
+        font-weight: 500;
+      }
+
+      .dock-primary {
+        appearance: none;
+        flex: 1;
+        min-width: 0;
+        min-height: 38px;
+        border: none;
+        background: var(--text-primary);
+        color: var(--bg-surface);
+        font-family: var(--font-mono);
+        font-size: 10.5px;
+        letter-spacing: 0.02em;
+        padding: 0 12px;
+        border-radius: 999px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 7px;
+        cursor: pointer;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      .dock-ic-pause {
+        display: inline-flex;
+        gap: 2.5px;
+        flex-shrink: 0;
+      }
+
+      .dock-ic-pause i {
+        width: 2px;
+        height: 9px;
+        background: currentColor;
+        display: block;
+        border-radius: 1px;
       }
     }
 
@@ -599,7 +1029,7 @@
     }
   </style>
 </head>
-<body>
+<body data-mobile-view="focus">
   <div class="ambient-layer" aria-hidden="true"></div>
   <main>
     <div class="header-bar">
@@ -611,22 +1041,32 @@
         title="Probed via @ondevice/localfirst detect() — click to switch between LFM3-Omni-2B (Unified Text+Speech WebGPU) and lightweight mobile/fallback models"
       >
         <span class="device-dot" aria-hidden="true"></span>
-        <span id="deviceBadgeText">localfirst · probing device...</span>
+        <span id="deviceBadgeText">on-device</span>
       </button>
     </div>
+
+    <button
+      type="button"
+      class="mobile-context-bar"
+      id="mobileContextBar"
+      aria-label="Change affirmation topic or preset"
+      hidden
+    >
+      <span class="ctx-topic" id="mobileContextTopic">Daily grounding</span>
+      <span class="ctx-edit">Change · 6 presets</span>
+    </button>
 
     <form id="scenarioForm">
       <div class="input-shell">
         <input
           id="scenarioInput"
           type="text"
-          placeholder="Describe a moment — or pick Daily Grounding..."
+          placeholder="What’s weighing on you?"
           autocomplete="off"
-          autofocus
         />
         <button type="submit" class="submit-kbd" title="Stream affirmations">
           <span class="kbd-label">Enter</span>
-          <span aria-hidden="true">↵</span>
+          <span aria-hidden="true">↑</span>
         </button>
       </div>
     </form>
@@ -639,6 +1079,14 @@
         <button type="button" class="sample-chip" data-sample="imposter">Imposter syndrome</button>
         <button type="button" class="sample-chip" data-sample="burnout">Burnout recovery</button>
         <button type="button" class="sample-chip" data-sample="shipping">Shipping v1</button>
+      </div>
+
+      <div class="mobile-pre-bar" id="mobilePreBar">
+        <span class="pre-label">Sanctuary stream</span>
+        <div class="micro-pills">
+          <button type="button" class="mpill" id="preCountBtn" title="Tap to change number of affirmations">4 cards</button>
+          <button type="button" class="mpill" id="preLoopBtn" title="Tap to cycle loop mode">1× loop</button>
+        </div>
       </div>
 
       <div class="controls-cluster">
@@ -659,7 +1107,20 @@
       </div>
     </div>
 
-    <section id="jsonRenderRoot" class="card-stream" aria-live="polite"></section>
+    <div class="sanctuary-wrap" id="sanctuaryWrap">
+      <section id="jsonRenderRoot" class="card-stream" aria-live="polite"></section>
+      <div class="focus-stage-footer" id="focusStageFooter" hidden>
+        <div class="step-dots" id="focusStepDots" role="tablist" aria-label="Affirmation cards"></div>
+        <p class="next-whisper" id="focusNextWhisper"></p>
+      </div>
+    </div>
+
+    <nav class="mobile-thumb-dock" id="mobileThumbDock" aria-label="Playback and view controls" hidden>
+      <button type="button" class="dock-pill" id="dockCountBtn" title="Tap to change card count">4 cards</button>
+      <button type="button" class="dock-primary" id="dockPlayBtn" title="Pause or replay speech">▶ Speak</button>
+      <button type="button" class="dock-pill" id="dockLoopBtn" title="Cycle repeat loop">1×</button>
+      <button type="button" class="dock-pill" id="dockViewBtn" title="Toggle between Focus Card and List view" aria-label="Switch to list view">List</button>
+    </nav>
   </main>
 
   <script type="module">
@@ -1118,6 +1579,26 @@
     const repeatIncBtn = document.getElementById("repeatIncBtn");
     const repeatInfBtn = document.getElementById("repeatInfBtn");
 
+    // Mobile Sanctuary Focus + Toggleable List controls
+    const mobileContextBar = document.getElementById("mobileContextBar");
+    const mobileContextTopic = document.getElementById("mobileContextTopic");
+    const preCountBtn = document.getElementById("preCountBtn");
+    const preLoopBtn = document.getElementById("preLoopBtn");
+    const sanctuaryWrap = document.getElementById("sanctuaryWrap");
+    const focusStageFooter = document.getElementById("focusStageFooter");
+    const focusStepDots = document.getElementById("focusStepDots");
+    const focusNextWhisper = document.getElementById("focusNextWhisper");
+    const mobileThumbDock = document.getElementById("mobileThumbDock");
+    const dockCountBtn = document.getElementById("dockCountBtn");
+    const dockPlayBtn = document.getElementById("dockPlayBtn");
+    const dockLoopBtn = document.getElementById("dockLoopBtn");
+    const dockViewBtn = document.getElementById("dockViewBtn");
+
+    let mobileViewMode = "focus"; // "focus" (default Sanctuary Card) | "list" (Editorial Stream)
+    let focusedCardId = 0;
+    let mobilePromptExpanded = false;
+    let activeTopicLabel = "Daily grounding";
+
     let currentGenId = 0;
     let llmReady = false;
     let ttsReady = false;
@@ -1442,8 +1923,25 @@
       };
     }
 
+    function isCompactMobileViewport() {
+      return window.matchMedia("(max-width: 640px)").matches;
+    }
+
+    function syncResponsivePlaceholder() {
+      input.placeholder = isCompactMobileViewport()
+        ? "What’s weighing on you?"
+        : "Describe a moment — or pick Daily Grounding...";
+    }
+    syncResponsivePlaceholder();
+    window.addEventListener("resize", () => {
+      syncResponsivePlaceholder();
+      updateDeviceBadgeUI("ready");
+      syncMobileSanctuaryUI();
+    });
+
     function updateDeviceBadgeUI(state = "ready", progressPercent = null) {
       const isOmni = selectedModelTier.engine === "lfm3-omni";
+      const compact = isCompactMobileViewport();
       const modeTag = isOmni
         ? "Omni Text+TTS"
         : isMobileDevice
@@ -1452,10 +1950,16 @@
       if (state === "loading") {
         deviceBadge.classList.add("loading");
         const pct = progressPercent !== null ? ` ${progressPercent}%` : "";
-        deviceBadgeText.textContent = `localfirst · ${selectedModelTier.shortName} (${selectedModelTier.sizeLabel}${pct})`;
+        deviceBadgeText.textContent = compact
+          ? `${isOmni ? "omni · 2B" : "on-device"}${pct}`
+          : `localfirst · ${selectedModelTier.shortName} (${selectedModelTier.sizeLabel}${pct})`;
       } else {
         deviceBadge.classList.toggle("loading", !llmReady && !isMobileDevice);
-        deviceBadgeText.textContent = `localfirst · ${selectedModelTier.shortName} (${selectedModelTier.sizeLabel} · ${modeTag})`;
+        deviceBadgeText.textContent = compact
+          ? isOmni
+            ? "omni · 2B"
+            : "on-device"
+          : `localfirst · ${selectedModelTier.shortName} (${selectedModelTier.sizeLabel} · ${modeTag})`;
       }
     }
 
@@ -1497,9 +2001,22 @@
     });
 
     function updateCountUI() {
+      const label = `${selectedCardCount} ${selectedCardCount === 1 ? "card" : "cards"}`;
       countStatus.textContent = `Cards · ${selectedCardCount}`;
       countDecBtn.disabled = selectedCardCount <= 1;
       countIncBtn.disabled = selectedCardCount >= 10;
+      if (preCountBtn) preCountBtn.textContent = label;
+      if (dockCountBtn) dockCountBtn.textContent = label;
+    }
+
+    function cycleMobileCardCount() {
+      const cycle = [3, 4, 5, 7, 10, 1, 2];
+      const idx = cycle.indexOf(selectedCardCount);
+      selectedCardCount = idx >= 0 ? cycle[(idx + 1) % cycle.length] : 4;
+      updateCountUI();
+      if (activeSampleKey) {
+        startScenario(PRECOOKED_SCENARIOS[activeSampleKey].query, activeSampleKey);
+      }
     }
 
     countDecBtn.addEventListener("click", () => {
@@ -1522,6 +2039,9 @@
       }
     });
 
+    preCountBtn.addEventListener("click", cycleMobileCardCount);
+    dockCountBtn.addEventListener("click", cycleMobileCardCount);
+
     updateCountUI();
 
     function updateRepeatUI() {
@@ -1535,6 +2055,216 @@
       } else {
         repeatStatus.textContent = `Repeat · ${countLabel}`;
       }
+
+      const loopActive = repeatCount > 1 || isInf;
+      if (preLoopBtn) {
+        preLoopBtn.textContent = isInf ? "∞ loop" : `${repeatCount}× loop`;
+        preLoopBtn.classList.toggle("active-soft", loopActive);
+      }
+      if (dockLoopBtn) {
+        dockLoopBtn.textContent = countLabel;
+        dockLoopBtn.classList.toggle("dock-active", loopActive);
+      }
+      syncMobileDockPlayState();
+    }
+
+    function cycleMobileRepeat() {
+      const cycle = [1, 3, 5, Infinity];
+      const idx = cycle.indexOf(repeatCount);
+      repeatCount = idx >= 0 ? cycle[(idx + 1) % cycle.length] : 3;
+      updateRepeatUI();
+    }
+
+    preLoopBtn.addEventListener("click", cycleMobileRepeat);
+    dockLoopBtn.addEventListener("click", cycleMobileRepeat);
+
+    function syncMobileDockPlayState() {
+      if (!dockPlayBtn) return;
+      if (isPlaying || activeSpeakingId >= 0) {
+        const passNum = completedPasses + 1;
+        dockPlayBtn.innerHTML = `<span class="dock-ic-pause" aria-hidden="true"><i></i><i></i></span><span>Listening · Pass ${passNum}</span>`;
+      } else {
+        dockPlayBtn.innerHTML = `<span aria-hidden="true">▶</span><span>Speak</span>`;
+      }
+    }
+
+    function setMobileViewMode(mode) {
+      mobileViewMode = mode === "list" ? "list" : "focus";
+      document.body.dataset.mobileView = mobileViewMode;
+      if (mobileViewMode === "list") {
+        // In list view, keep prompt accessible or collapsible cleanly
+        dockViewBtn.textContent = "Focus";
+        dockViewBtn.setAttribute("aria-label", "Switch to focus card view");
+      } else {
+        dockViewBtn.textContent = "List";
+        dockViewBtn.setAttribute("aria-label", "Switch to list view");
+      }
+      syncMobileSanctuaryUI();
+    }
+
+    dockViewBtn.addEventListener("click", () => {
+      setMobileViewMode(mobileViewMode === "focus" ? "list" : "focus");
+    });
+
+    dockPlayBtn.addEventListener("click", () => {
+      unlockAudioOnUserGesture();
+      if (isPlaying || activeSpeakingId >= 0) {
+        stopAllAudio();
+        interruptLfm3Turn();
+        interruptClientIfActive(ttsClient);
+      } else {
+        const startIdx = typeof focusedCardId === "number" && focusedCardId >= 0 ? focusedCardId : 0;
+        replayFromCard(startIdx);
+      }
+    });
+
+    mobileContextBar.addEventListener("click", () => {
+      mobilePromptExpanded = !mobilePromptExpanded;
+      syncMobileSanctuaryUI();
+      if (mobilePromptExpanded) {
+        setTimeout(() => input.focus(), 60);
+      }
+    });
+
+    // Horizontal swipe on Sanctuary Card to step between affirmations in Focus view
+    let touchSwipeStartX = null;
+    let touchSwipeStartY = null;
+    sanctuaryWrap.addEventListener(
+      "touchstart",
+      (e) => {
+        if (e.touches.length === 1) {
+          touchSwipeStartX = e.touches[0].clientX;
+          touchSwipeStartY = e.touches[0].clientY;
+        }
+      },
+      { passive: true }
+    );
+    sanctuaryWrap.addEventListener(
+      "touchend",
+      (e) => {
+        if (touchSwipeStartX === null || mobileViewMode !== "focus" || !currentSpec) return;
+        const dx = e.changedTouches[0].clientX - touchSwipeStartX;
+        const dy = e.changedTouches[0].clientY - touchSwipeStartY;
+        touchSwipeStartX = null;
+        if (Math.abs(dx) > 48 && Math.abs(dx) > Math.abs(dy) * 1.4) {
+          const numericNodes = (currentSpec.children || []).filter(
+            (c) => typeof c.props.id === "number"
+          );
+          if (numericNodes.length <= 1) return;
+          const nextIdx =
+            dx < 0
+              ? Math.min(numericNodes.length - 1, focusedCardId + 1)
+              : Math.max(0, focusedCardId - 1);
+          if (nextIdx !== focusedCardId) {
+            focusedCardId = nextIdx;
+            replayFromCard(nextIdx);
+          }
+        }
+      },
+      { passive: true }
+    );
+
+    function syncMobileSanctuaryUI() {
+      const children = currentSpec?.children || [];
+      const hasCards = children.length > 0;
+      const numericNodes = children.filter((c) => typeof c.props.id === "number");
+      const isWarmupOnly = hasCards && numericNodes.length === 0;
+
+      document.body.classList.toggle("mobile-has-cards", hasCards);
+
+      const collapsePrompt =
+        isCompactMobileViewport() && hasCards && !mobilePromptExpanded && mobileViewMode === "focus";
+      document.body.classList.toggle("mobile-prompt-collapsed", collapsePrompt);
+
+      if (mobileContextBar) {
+        mobileContextTopic.textContent = activeTopicLabel || "Affirmations";
+        mobileContextBar.hidden = !collapsePrompt;
+      }
+
+      if (mobileThumbDock) {
+        mobileThumbDock.hidden = !hasCards;
+      }
+
+      // Determine which card is center-stage in Focus Mode
+      let targetFocusId = isWarmupOnly ? "warmup" : focusedCardId;
+      if (typeof activeSpeakingId === "number" && activeSpeakingId >= 0) {
+        targetFocusId = activeSpeakingId;
+        focusedCardId = activeSpeakingId;
+      } else if (!isWarmupOnly && numericNodes.length > 0) {
+        if (focusedCardId >= numericNodes.length || focusedCardId < 0) {
+          focusedCardId = 0;
+        }
+        targetFocusId = focusedCardId;
+      }
+
+      const totalCount = Math.max(numericNodes.length, currentSpec?.props?.count || selectedCardCount);
+      root.querySelectorAll(".aff-card").forEach((cardEl) => {
+        const cid = cardEl.dataset.cardId;
+        const isFocused = String(targetFocusId) === cid;
+        cardEl.classList.toggle("is-focused", isFocused);
+        const numEl = cardEl.querySelector(".aff-num");
+        if (numEl && cid !== "warmup") {
+          numEl.dataset.stepTotal = ` / ${String(totalCount).padStart(2, "0")}`;
+        } else if (numEl) {
+          numEl.dataset.stepTotal = "";
+        }
+      });
+
+      // Auto-center speaking card smoothly in Mobile List View
+      if (
+        isCompactMobileViewport() &&
+        mobileViewMode === "list" &&
+        typeof activeSpeakingId === "number" &&
+        activeSpeakingId >= 0
+      ) {
+        const activeEl = root.querySelector(`[data-card-id="${activeSpeakingId}"]`);
+        if (activeEl) {
+          activeEl.scrollIntoView({ behavior: "smooth", block: "nearest" });
+        }
+      }
+
+      // Update Step Dots & Next Whisper below Sanctuary Focus Card
+      if (focusStageFooter) {
+        const showFooter = hasCards && !isWarmupOnly && mobileViewMode === "focus";
+        focusStageFooter.hidden = !showFooter;
+        if (showFooter) {
+          if (focusStepDots.children.length !== totalCount) {
+            focusStepDots.innerHTML = "";
+            for (let dIdx = 0; dIdx < totalCount; dIdx++) {
+              const dot = document.createElement("button");
+              dot.type = "button";
+              dot.className = "step-dot";
+              dot.setAttribute("aria-label", `Affirmation ${dIdx + 1}`);
+              dot.addEventListener("click", () => {
+                const readyCount = (currentSpec?.children || []).filter(
+                  (c) => typeof c.props.id === "number"
+                ).length;
+                if (dIdx < readyCount) {
+                  focusedCardId = dIdx;
+                  replayFromCard(dIdx);
+                }
+              });
+              focusStepDots.appendChild(dot);
+            }
+          }
+          Array.from(focusStepDots.children).forEach((dot, idx) => {
+            dot.classList.toggle("current", idx === targetFocusId);
+            dot.classList.toggle("done", typeof targetFocusId === "number" && idx < targetFocusId);
+          });
+
+          const nextNode =
+            typeof targetFocusId === "number" ? numericNodes[targetFocusId + 1] : null;
+          if (nextNode && nextNode.props.text) {
+            focusNextWhisper.textContent = `Next · ${nextNode.props.text}`;
+          } else if (repeatCount === Infinity || completedPasses + 1 < repeatCount) {
+            focusNextWhisper.textContent = `Loop · Pass ${completedPasses + 2} begins next`;
+          } else {
+            focusNextWhisper.textContent = "Tap card or swipe to revisit any affirmation";
+          }
+        }
+      }
+
+      syncMobileDockPlayState();
     }
 
     repeatDecBtn.addEventListener("click", () => {
@@ -1784,6 +2514,8 @@
         const dom = fn(node.props, existing);
         if (!existing) container.appendChild(dom);
       });
+
+      syncMobileSanctuaryUI();
     }
 
     function updateSpeakingHighlight(id, durationMs = 2800) {
@@ -2333,11 +3065,15 @@
     }
 
     function replayFromCard(startId) {
+      if (typeof startId === "number" && startId >= 0) {
+        focusedCardId = startId;
+      }
       unlockAudioOnUserGesture();
       stopAllAudio();
       interruptLfm3Turn();
       interruptClientIfActive(ttsClient);
       completedPasses = 0;
+      syncMobileSanctuaryUI();
       if (!currentSpec) return;
 
       const nodes = (currentSpec.children || []).filter(
@@ -2949,6 +3685,16 @@
       completedPasses = 0;
       ttsLoadingCardId = -1;
       activeSampleKey = sampleKey;
+      focusedCardId = 0;
+      mobilePromptExpanded = false;
+
+      if (sampleKey) {
+        const matchingChip = document.querySelector(`.sample-chip[data-sample="${sampleKey}"]`);
+        activeTopicLabel = matchingChip ? matchingChip.textContent.trim() : query;
+      } else {
+        const parsed = parseScenarioAndCount(query);
+        activeTopicLabel = parsed.scenario || query;
+      }
 
       stopAllAudio();
       unlockAudioOnUserGesture();
@@ -2964,6 +3710,8 @@
       document.querySelectorAll(".sample-chip").forEach((chip) => {
         chip.classList.toggle("active", chip.dataset.sample === sampleKey);
       });
+
+      syncMobileSanctuaryUI();
 
       if (sampleKey && PRECOOKED_SCENARIOS[sampleKey]) {
         runPrecookedSample(genId, sampleKey, selectedCardCount);
@@ -2998,6 +3746,9 @@
       e.preventDefault();
       const query = input.value.trim();
       if (!query) return;
+      if (isCompactMobileViewport()) {
+        input.blur();
+      }
       startScenario(query, null);
     });
 
@@ -3007,9 +3758,16 @@
         const sample = PRECOOKED_SCENARIOS[key];
         if (!sample) return;
         input.value = sample.query;
+        if (isCompactMobileViewport()) {
+          input.blur();
+        }
         startScenario(sample.query, key);
       });
     });
+
+    if (!isCompactMobileViewport()) {
+      input.focus();
+    }
 
     // Startup: Probe hardware via @ondevice/localfirst detect(), Lfm3Omni.checkAvailability(), & browser-llm-fit fit()
     // On desktop, preload LFM3-Omni-2B (or ONNX fallback + Kokoro-82M) in background.
