@@ -14,7 +14,8 @@
         "@ondevice/localfirst": "./localfirst.browser.js",
         "@ondevice/localfirst/detect": "./localfirst.browser.js",
         "browser-llm-fit": "./browser-llm-fit.browser.js",
-        "webml-kit": "./webml-kit.browser.js"
+        "webml-kit": "./webml-kit.browser.js",
+        "lfm3-omni": "./Lfm3OmniForConditionalGeneration.js"
       }
     }
   </script>
@@ -607,7 +608,7 @@
         type="button"
         class="device-pill loading"
         id="deviceBadge"
-        title="Probed via @ondevice/localfirst detect() & browser-llm-fit — click to cycle lightweight model tier"
+        title="Probed via @ondevice/localfirst detect() — click to switch between LFM3-Omni-2B (Unified Text+Speech WebGPU) and lightweight mobile/fallback models"
       >
         <span class="device-dot" aria-hidden="true"></span>
         <span id="deviceBadgeText">localfirst · probing device...</span>
@@ -669,36 +670,55 @@
     const TTS_MODEL_ID = "onnx-community/Kokoro-82M-v1.0-ONNX";
 
     /**
-     * Tiered lightweight on-device LLM catalog.
-     * Probed dynamically at startup via @ondevice/localfirst `detect()` + `browser-llm-fit` `fit()`.
+     * Tiered on-device model catalog:
+     * - Flagship Desktop WebGPU: LiquidAI/LFM3-Omni-2B-GGUF (Unified Text + 24kHz Speech in 1 pass)
+     * - Automatic Fallbacks: Qwen2.5-0.5B / SmolLM2-360M / SmolLM2-135M (Mobile 92MB) + Kokoro-82M TTS
+     * Probed dynamically at startup via @ondevice/localfirst `detect()` + `Lfm3Omni.checkAvailability()` + `browser-llm-fit`.
      */
     const LIGHTWEIGHT_MODEL_TIERS = [
       {
         key: "smollm2-135m",
+        engine: "webml-kit",
         fitId: "smollm2-135m-instruct",
         modelId: "HuggingFaceTB/SmolLM2-135M-Instruct",
         shortName: "SmolLM2-135M",
+        sizeLabel: "92MB",
         sizeMB: 92,
         dtype: "q4",
         tierName: "Mobile Ultra-Light",
       },
       {
         key: "smollm2-360m",
+        engine: "webml-kit",
         fitId: "smollm2-360m-instruct",
         modelId: "HuggingFaceTB/SmolLM2-360M-Instruct",
         shortName: "SmolLM2-360M",
+        sizeLabel: "240MB",
         sizeMB: 240,
         dtype: "q4",
         tierName: "Compact Edge",
       },
       {
         key: "qwen2.5-0.5b",
+        engine: "webml-kit",
         fitId: "qwen-2.5-0.5b-instruct",
         modelId: "onnx-community/Qwen2.5-0.5B-Instruct",
         shortName: "Qwen2.5-0.5B",
+        sizeLabel: "350MB",
         sizeMB: 350,
         dtype: "q4",
-        tierName: "Desktop WebGPU",
+        tierName: "Desktop Fallback",
+      },
+      {
+        key: "lfm3-omni-2b",
+        engine: "lfm3-omni",
+        fitId: null,
+        modelId: "LiquidAI/LFM3-Omni-2B-GGUF",
+        shortName: "LFM3-Omni-2B",
+        sizeLabel: "1.26GB",
+        sizeMB: 1260,
+        dtype: "q4_0",
+        tierName: "Unified Omni Text+Speech",
       },
     ];
 
@@ -1103,10 +1123,18 @@
     let ttsReady = false;
     let llmLoadPromise = null;
     let ttsLoadPromise = null;
+    let llmLoadAbortController = null;
     let generationComplete = false;
     let activeSampleKey = null;
 
-    // Hardware & model state probed by @ondevice/localfirst + browser-llm-fit
+    // LFM3-Omni-2B Unified WebGPU runtime state (lazy-imported only when WebGPU is used)
+    let lfm3ModulePromise = null;
+    let lfm3Model = null;
+    let lfm3Session = null;
+    let lfm3TurnAbortController = null;
+    let lfm3TurnIdle = Promise.resolve();
+
+    // Hardware & model state probed by @ondevice/localfirst + Lfm3Omni + browser-llm-fit
     let localfirstTelemetry = null;
     let localfirstEngine = null;
     let selectedModelTier = LIGHTWEIGHT_MODEL_TIERS[0];
@@ -1122,9 +1150,11 @@
 
     let audioCtx = null;
     let masterGain = null;
-    let currentSource = null;
     let isPlaying = false;
-    let audioQueue = [];
+    let scheduledSources = new Set();
+    let scheduledHighlightTimers = new Set();
+    let nextPlayTime = 0;
+    let lastScheduledCardIndex = -1;
     let activeSpeakingId = -1;
     let activeSpeakDurationMs = 2800;
     let currentSpec = null;
@@ -1132,9 +1162,39 @@
     const cardAudioChunks = new Map();
     const wavBufferCache = new Map();
 
+    function getLfm3Module() {
+      if (!lfm3ModulePromise) {
+        lfm3ModulePromise = import("lfm3-omni");
+      }
+      return lfm3ModulePromise;
+    }
+
+    function interruptLfm3Turn() {
+      if (lfm3TurnAbortController) {
+        try {
+          lfm3TurnAbortController.abort();
+        } catch (_) {}
+        lfm3TurnAbortController = null;
+      }
+    }
+
+    async function withLfm3TurnLock(fn) {
+      const prev = lfm3TurnIdle;
+      let release;
+      lfm3TurnIdle = new Promise((r) => {
+        release = r;
+      });
+      await prev.catch(() => {});
+      try {
+        return await fn();
+      } finally {
+        release();
+      }
+    }
+
     /**
-     * Detect mobile hardware / viewport and probe optimal lightweight model
-     * using @ondevice/localfirst `detect()` and `browser-llm-fit` `fit()`.
+     * Detect mobile hardware / viewport and probe optimal model tier
+     * using @ondevice/localfirst `detect()`, `Lfm3Omni.checkAvailability()`, and `browser-llm-fit` `fit()`.
      */
     function checkIsMobileViewportOrUA() {
       const params = new URLSearchParams(window.location.search);
@@ -1157,7 +1217,8 @@
       selectedBackend = hasWebGPU ? "webgpu" : "wasm";
 
       const navMem = typeof navigator !== "undefined" ? navigator.deviceMemory : undefined;
-      const reportedRamGb = navMem || localfirstTelemetry?.memory?.totalGb || (hasWebGPU && !isMobileDevice ? 8 : 4);
+      const reportedRamGb =
+        navMem || localfirstTelemetry?.memory?.totalGb || (hasWebGPU && !isMobileDevice ? 8 : 4);
       // Mobile browsers impose strict per-tab memory ceilings (~3GB effective envelope)
       const effectiveRamGb = isMobileDevice ? Math.min(reportedRamGb, 3) : reportedRamGb;
       const fitGpuMode = hasWebGPU ? "webgpu-f16" : "wasm-cpu";
@@ -1167,7 +1228,9 @@
 
       if (requestedKey) {
         const match = LIGHTWEIGHT_MODEL_TIERS.find(
-          (t) => t.key === requestedKey || t.modelId.toLowerCase().includes(requestedKey.toLowerCase())
+          (t) =>
+            t.key === requestedKey ||
+            t.modelId.toLowerCase().includes(requestedKey.toLowerCase())
         );
         if (match) {
           selectedModelTier = match;
@@ -1178,32 +1241,59 @@
         localfirstTelemetry?.models?.llm?.tier === "wasm-simd" ||
         effectiveRamGb < 4
       ) {
-        // Mobile / tablet / low-memory / WASM -> load ultra-lightweight SmolLM2-135M (92MB q4)
+        // Mobile / tablet / low-memory / WASM -> ultra-lightweight SmolLM2-135M (92MB q4) + Kokoro-82M
         selectedModelTier = LIGHTWEIGHT_MODEL_TIERS[0];
       } else if (effectiveRamGb < 8) {
-        // Mid-tier 4-6GB WebGPU -> SmolLM2-360M (240MB q4)
+        // Mid-tier 4-6GB WebGPU -> SmolLM2-360M (240MB q4) + Kokoro-82M
         selectedModelTier = LIGHTWEIGHT_MODEL_TIERS[1];
       } else {
-        // Desktop 8GB+ WebGPU -> Qwen2.5-0.5B (350MB q4)
-        selectedModelTier = LIGHTWEIGHT_MODEL_TIERS[2];
+        // Desktop 8GB+ WebGPU -> Flagship LFM3-Omni-2B (Unified Text + 24kHz Speech), with fallback check
+        selectedModelTier = LIGHTWEIGHT_MODEL_TIERS[3];
       }
 
       // Immediately update badge after <2ms @ondevice/localfirst probe
       updateDeviceBadgeUI("probed");
 
-      // 2. Verify candidate fit via browser-llm-fit `fit()` and downgrade tier if needed
-      try {
-        const fitCheck = await fit(selectedModelTier.fitId, {
-          ram: effectiveRamGb,
-          gpu: fitGpuMode,
-        });
-        if (!fitCheck.fits && selectedModelTier.key !== "smollm2-135m") {
+      // 2. Verify WebGPU adapter limits for LFM3-Omni-2B or browser-llm-fit bounds for ONNX tiers
+      if (selectedModelTier.engine === "lfm3-omni") {
+        if (!hasWebGPU) {
           selectedModelTier = LIGHTWEIGHT_MODEL_TIERS[0];
           updateDeviceBadgeUI("probed");
+        } else {
+          try {
+            const { Lfm3OmniForConditionalGeneration } = await getLfm3Module();
+            const avail = await Lfm3OmniForConditionalGeneration.checkAvailability(
+              selectedModelTier.modelId
+            );
+            if (!avail?.ok) {
+              console.info(
+                `[localfirst] LFM3-Omni-2B unavailable on this GPU (${avail?.reason || "limits"}), falling back to Qwen2.5-0.5B`
+              );
+              selectedModelTier = LIGHTWEIGHT_MODEL_TIERS[2];
+              updateDeviceBadgeUI("probed");
+            }
+          } catch (err) {
+            console.warn("[localfirst] LFM3-Omni probe error, falling back:", err);
+            selectedModelTier = LIGHTWEIGHT_MODEL_TIERS[2];
+            updateDeviceBadgeUI("probed");
+          }
         }
-      } catch (_) {}
+      }
 
-      // 3. Configure @ondevice/localfirst HybridEngine with local runner & zero-crash fallback
+      if (selectedModelTier.fitId) {
+        try {
+          const fitCheck = await fit(selectedModelTier.fitId, {
+            ram: effectiveRamGb,
+            gpu: fitGpuMode,
+          });
+          if (!fitCheck.fits && selectedModelTier.key !== "smollm2-135m") {
+            selectedModelTier = LIGHTWEIGHT_MODEL_TIERS[0];
+            updateDeviceBadgeUI("probed");
+          }
+        } catch (_) {}
+      }
+
+      // 3. Configure @ondevice/localfirst HybridEngine with unified LFM3-Omni / webml-kit runners
       localfirstEngine = await localfirst({
         mode: "prefer-local",
         local: {
@@ -1211,11 +1301,27 @@
             load: () => initLLMPreload(),
             generate: async (prompt, opts = {}) => {
               await initLLMPreload();
+              if (selectedModelTier.engine === "lfm3-omni" && lfm3Session) {
+                const msgs = Array.isArray(prompt)
+                  ? prompt
+                  : [{ role: "user", content: String(prompt) }];
+                const out = await withLfm3TurnLock(async () => {
+                  let acc = "";
+                  for await (const ev of lfm3Session.generate(msgs, {
+                    generation_mode: "text",
+                    max_new_tokens: opts.maxNewTokens || 64,
+                  })) {
+                    if (ev.type === "text") acc += ev.text;
+                  }
+                  return acc;
+                });
+                return { text: out, confidence: 0.96, source: "local" };
+              }
               let out = "";
               for await (const { token } of llmClient.stream(prompt, opts)) {
                 out += token;
               }
-              return { text: out, confidence: 0.92, source: "local" };
+              return { text: out, confidence: 0.94, source: "local" };
             },
             generateStream: async function* (messages, opts = {}) {
               await initLLMPreload();
@@ -1226,15 +1332,20 @@
                   token,
                   text: accumulated,
                   source: "local",
-                  confidence: 0.92,
+                  confidence: 0.94,
                   done: false,
                 };
               }
             },
           },
           tts: {
-            load: () => initTTSPreload(),
+            load: () =>
+              selectedModelTier.engine === "lfm3-omni" ? initLLMPreload() : initTTSPreload(),
             speak: async (text, opts = {}) => {
+              if (selectedModelTier.engine === "lfm3-omni" && lfm3Session) {
+                const audio = await runLfm3PureTTS(text);
+                return { audio, sampling_rate: lfm3Model?.audio_sampling_rate || 24000 };
+              }
               await initTTSPreload();
               return await ttsClient.run("text-to-speech", text, {
                 voice: opts.voice || "af_heart",
@@ -1254,26 +1365,49 @@
     }
 
     function updateDeviceBadgeUI(state = "ready", progressPercent = null) {
-      const modeTag = isMobileDevice ? "Mobile" : selectedBackend.toUpperCase();
+      const isOmni = selectedModelTier.engine === "lfm3-omni";
+      const modeTag = isOmni
+        ? "Omni Text+TTS"
+        : isMobileDevice
+        ? "Mobile"
+        : selectedBackend.toUpperCase();
       if (state === "loading") {
         deviceBadge.classList.add("loading");
         const pct = progressPercent !== null ? ` ${progressPercent}%` : "";
-        deviceBadgeText.textContent = `localfirst · ${selectedModelTier.shortName} (${selectedModelTier.sizeMB}MB${pct})`;
+        deviceBadgeText.textContent = `localfirst · ${selectedModelTier.shortName} (${selectedModelTier.sizeLabel}${pct})`;
       } else {
         deviceBadge.classList.toggle("loading", !llmReady);
-        deviceBadgeText.textContent = `localfirst · ${selectedModelTier.shortName} (${selectedModelTier.sizeMB}MB · ${modeTag})`;
+        deviceBadgeText.textContent = `localfirst · ${selectedModelTier.shortName} (${selectedModelTier.sizeLabel} · ${modeTag})`;
       }
     }
 
-    // Allow clicking the device pill to cycle between the 3 lightweight models
+    // Allow clicking the device pill to cycle between LFM3-Omni-2B and lightweight fallback models
     deviceBadge.addEventListener("click", async () => {
-      const idx = LIGHTWEIGHT_MODEL_TIERS.findIndex((t) => t.key === selectedModelTier.key);
-      const nextTier = LIGHTWEIGHT_MODEL_TIERS[(idx + 1) % LIGHTWEIGHT_MODEL_TIERS.length];
+      if (llmLoadAbortController) {
+        try {
+          llmLoadAbortController.abort();
+        } catch (_) {}
+        llmLoadAbortController = null;
+      }
+      interruptLfm3Turn();
+      llmClient.interrupt();
+
+      const hasWebGPU = Boolean(localfirstTelemetry?.gpu?.webgpu);
+      const candidates = hasWebGPU
+        ? LIGHTWEIGHT_MODEL_TIERS
+        : LIGHTWEIGHT_MODEL_TIERS.filter((t) => t.engine !== "lfm3-omni");
+
+      const idx = candidates.findIndex((t) => t.key === selectedModelTier.key);
+      const nextTier = candidates[(idx + 1) % candidates.length];
       selectedModelTier = nextTier;
+      selectedBackend = hasWebGPU ? "webgpu" : "wasm";
       llmReady = false;
       llmLoadPromise = null;
       updateDeviceBadgeUI("loading", 0);
       await initLLMPreload();
+      if (selectedModelTier.engine !== "lfm3-omni" && !isMobileDevice) {
+        initTTSPreload();
+      }
     });
 
     function updateCountUI() {
@@ -1457,15 +1591,32 @@
       updateRepeatUI();
     }
 
-    function stopAllAudio() {
-      audioQueue = [];
-      if (currentSource) {
-        try {
-          currentSource.onended = null;
-          currentSource.stop();
-        } catch (_) {}
-        currentSource = null;
+    function mergeFloat32Chunks(chunks) {
+      let total = 0;
+      for (const c of chunks) total += c.length;
+      const out = new Float32Array(total);
+      let offset = 0;
+      for (const c of chunks) {
+        out.set(c, offset);
+        offset += c.length;
       }
+      return out;
+    }
+
+    function stopAllAudio() {
+      for (const src of scheduledSources) {
+        try {
+          src.onended = null;
+          src.stop();
+        } catch (_) {}
+      }
+      scheduledSources.clear();
+      for (const timer of scheduledHighlightTimers) {
+        clearTimeout(timer);
+      }
+      scheduledHighlightTimers.clear();
+      nextPlayTime = 0;
+      lastScheduledCardIndex = -1;
       isPlaying = false;
       updateSpeakingHighlight(-1);
     }
@@ -1477,29 +1628,28 @@
       cardAudioChunks.get(index).push(chunk);
     }
 
-    function enqueueAudio(item) {
-      if (item.genId !== undefined && item.genId !== currentGenId) return;
-      audioQueue.push(item);
-      if (!isPlaying) {
-        playNextInQueue();
-      }
-    }
-
     function checkAndScheduleRepeatPass() {
       if (!generationComplete || !currentSpec) return false;
       const maxPasses = repeatCount;
       if (completedPasses + 1 >= maxPasses) return false;
 
-      completedPasses += 1;
       const nodes = (currentSpec.children || []).filter((c) => typeof c.props.id === "number");
       if (nodes.length === 0) return false;
+
+      let scheduledAny = false;
+      completedPasses += 1;
+      lastScheduledCardIndex = -1;
+      if (audioCtx) {
+        nextPlayTime = Math.max(audioCtx.currentTime + 0.45, nextPlayTime + 0.45);
+      }
 
       for (const node of nodes) {
         const idx = node.props.id;
         const chunks = cardAudioChunks.get(idx);
         if (chunks && chunks.length > 0) {
           chunks.forEach((ch, cIdx) => {
-            audioQueue.push({
+            scheduledAny = true;
+            enqueueAudio({
               genId: currentGenId,
               index: idx,
               text: node.props.text,
@@ -1510,52 +1660,84 @@
           });
         }
       }
-      return audioQueue.length > 0;
+      return scheduledAny;
     }
 
-    async function playNextInQueue() {
-      if (audioQueue.length === 0) {
-        if (checkAndScheduleRepeatPass()) {
-          await new Promise((r) => setTimeout(r, 520));
-          if (audioQueue.length > 0) {
-            playNextInQueue();
-            return;
-          }
-        }
+    function onAudioQueueDrained() {
+      const drainTimer = setTimeout(() => {
+        scheduledHighlightTimers.delete(drainTimer);
+        if (scheduledSources.size > 0) return;
+        if (checkAndScheduleRepeatPass()) return;
         isPlaying = false;
+        lastScheduledCardIndex = -1;
         updateSpeakingHighlight(-1);
-        return;
-      }
+      }, 120);
+      scheduledHighlightTimers.add(drainTimer);
+    }
 
+    /**
+     * Sample-accurate gapless Web Audio playhead scheduler.
+     * Supports both 0ms-gap streaming PCM frames from LFM3-Omni-2B (`isStreamChunk: true`)
+     * and clause-level buffers from Kokoro-82M / prebaked WAVs.
+     */
+    function enqueueAudio(item) {
+      if (item.genId !== undefined && item.genId !== currentGenId) return;
+      if (!item.samples || item.samples.length === 0) return;
+
+      ensureAudioContext();
       isPlaying = true;
-      const item = audioQueue.shift();
-      if (item.genId !== undefined && item.genId !== currentGenId) {
-        playNextInQueue();
-        return;
+
+      const sr = item.sampleRate || 24000;
+      const now = audioCtx.currentTime;
+      const isNewCard = item.index !== lastScheduledCardIndex;
+
+      let startAt;
+      if (lastScheduledCardIndex === -1) {
+        startAt = Math.max(now + 0.015, nextPlayTime);
+      } else if (!isNewCard) {
+        // Same card: 0ms sample-accurate stitch for LFM3-Omni live PCM chunks; 55ms pause for clauses
+        startAt = item.isStreamChunk
+          ? Math.max(now, nextPlayTime)
+          : Math.max(now, nextPlayTime + 0.055);
+      } else {
+        // Next card: 200ms natural breathing pause
+        startAt = Math.max(now + 0.015, nextPlayTime + 0.2);
       }
 
-      if (item.samples && item.samples.length > 0) {
-        ensureAudioContext();
-        const sr = item.sampleRate || 24000;
-        const durMs = Math.round((item.samples.length / sr) * 1000);
-        updateSpeakingHighlight(item.index, durMs);
+      const durSec = item.samples.length / sr;
+      const durMs = Math.round(durSec * 1000);
+      lastScheduledCardIndex = item.index;
+      nextPlayTime = startAt + durSec;
 
-        await new Promise((resolve) => {
-          const buf = audioCtx.createBuffer(1, item.samples.length, sr);
-          buf.copyToChannel(item.samples, 0);
-          const src = audioCtx.createBufferSource();
-          src.buffer = buf;
-          src.connect(masterGain || audioCtx.destination);
-          currentSource = src;
-          src.onended = () => {
-            currentSource = null;
-            setTimeout(resolve, item.isLastClause === false ? 55 : 190);
-          };
-          src.start(0);
-        });
+      if (isNewCard) {
+        const delayMs = Math.max(0, Math.round((startAt - now) * 1000));
+        const hlDuration = item.isStreamChunk ? Math.max(3400, durMs) : durMs;
+        if (delayMs <= 16) {
+          updateSpeakingHighlight(item.index, hlDuration);
+        } else {
+          const hlTimer = setTimeout(() => {
+            scheduledHighlightTimers.delete(hlTimer);
+            if (item.genId === undefined || item.genId === currentGenId) {
+              updateSpeakingHighlight(item.index, hlDuration);
+            }
+          }, delayMs);
+          scheduledHighlightTimers.add(hlTimer);
+        }
       }
 
-      playNextInQueue();
+      const buf = audioCtx.createBuffer(1, item.samples.length, sr);
+      buf.copyToChannel(item.samples, 0);
+      const src = audioCtx.createBufferSource();
+      src.buffer = buf;
+      src.connect(masterGain || audioCtx.destination);
+      scheduledSources.add(src);
+      src.onended = () => {
+        scheduledSources.delete(src);
+        if (scheduledSources.size === 0) {
+          onAudioQueueDrained();
+        }
+      };
+      src.start(startAt);
     }
 
     async function loadPrebakedWav(url) {
@@ -1589,6 +1771,56 @@
       return merged;
     }
 
+    /**
+     * Synthesize 24kHz speech using Liquid AI LFM3-Omni-2B in pure `"audio"` generation mode.
+     * Note: LFM3-Omni speech output decodes text greedily (`do_sample` must NOT be true);
+     * its internal depth decoder samples audio frames natively at 24kHz.
+     */
+    async function runLfm3PureTTS(text, signal = null, onChunk = null) {
+      await initLLMPreload();
+      if (!lfm3Session || !lfm3Model) {
+        throw new Error("LFM3-Omni session unavailable");
+      }
+      const sr = lfm3Model.audio_sampling_rate || 24000;
+      return await withLfm3TurnLock(async () => {
+        const turnCtrl = new AbortController();
+        lfm3TurnAbortController = turnCtrl;
+        if (signal) {
+          if (signal.aborted) turnCtrl.abort();
+          else signal.addEventListener("abort", () => turnCtrl.abort(), { once: true });
+        }
+        const chunks = [];
+        try {
+          const stream = lfm3Session.generate(
+            [
+              {
+                role: "system",
+                content: "Perform TTS in American English using a female voice.",
+              },
+              { role: "user", content: text },
+            ],
+            {
+              generation_mode: "audio",
+              max_new_tokens: 240,
+              signal: turnCtrl.signal,
+            }
+          );
+          for await (const ev of stream) {
+            if (ev.type === "audio" && ev.audio && ev.audio.length > 0) {
+              const pcm = new Float32Array(ev.audio);
+              chunks.push(pcm);
+              if (onChunk) onChunk(pcm, sr);
+            }
+          }
+        } finally {
+          if (lfm3TurnAbortController === turnCtrl) {
+            lfm3TurnAbortController = null;
+          }
+        }
+        return normalizeAudioSamples(mergeFloat32Chunks(chunks));
+      });
+    }
+
     async function synthesizeAndStreamCard(genId, index, text, prebakedAudioUrl = null) {
       if (genId !== currentGenId) return;
 
@@ -1609,6 +1841,32 @@
         } catch (_) {}
       }
 
+      // Unified LFM3-Omni-2B WebGPU path: stream 24kHz PCM directly from the omni model
+      if (selectedModelTier.engine === "lfm3-omni" && lfm3Session && !lfm3Model?.lost) {
+        try {
+          const sr = lfm3Model.audio_sampling_rate || 24000;
+          const merged = await runLfm3PureTTS(text, null, (pcmChunk, chunkSr) => {
+            if (genId !== currentGenId) return;
+            enqueueAudio({
+              genId,
+              index,
+              text,
+              samples: pcmChunk,
+              sampleRate: chunkSr,
+              isStreamChunk: true,
+            });
+          });
+          if (genId === currentGenId && merged.length > 0) {
+            cardAudioChunks.set(index, [{ samples: merged, sampleRate: sr }]);
+            return;
+          }
+        } catch (err) {
+          if (err?.name === "AbortError") return;
+          console.warn("[LFM3-Omni] Pure TTS fallback to Kokoro-82M:", err);
+        }
+      }
+
+      // Fallback / Lightweight path: Kokoro-82M-v1.0-ONNX (q8 WASM)
       await initTTSPreload();
       if (genId !== currentGenId) return;
 
@@ -1646,6 +1904,7 @@
 
     function replayFromCard(startId) {
       stopAllAudio();
+      interruptLfm3Turn();
       ttsClient.interrupt();
       completedPasses = 0;
       if (!currentSpec) return;
@@ -1792,6 +2051,9 @@
 
     function initLLMPreload() {
       if (llmLoadPromise) return llmLoadPromise;
+      const loadCtrl = new AbortController();
+      llmLoadAbortController = loadCtrl;
+
       llmLoadPromise = (async () => {
         if (!localfirstTelemetry) {
           await probeHardwareAndSelectModel();
@@ -1807,16 +2069,83 @@
         ];
 
         for (const candidate of fallbackOrder) {
+          if (loadCtrl.signal.aborted) return;
           try {
             selectedModelTier = candidate;
             updateDeviceBadgeUI("loading", 0);
 
+            if (candidate.engine === "lfm3-omni") {
+              if (lfm3Model && lfm3Session && !lfm3Model.lost) {
+                llmReady = true;
+                ttsReady = true;
+                updateDeviceBadgeUI("ready");
+                return;
+              }
+              const { Lfm3OmniForConditionalGeneration } = await getLfm3Module();
+              const avail = await Lfm3OmniForConditionalGeneration.checkAvailability(
+                candidate.modelId
+              );
+              if (!avail?.ok) {
+                throw new Error(avail?.reason || "WebGPU adapter unsupported for LFM3-Omni-2B");
+              }
+
+              lfm3Model = await Lfm3OmniForConditionalGeneration.from_pretrained(
+                candidate.modelId,
+                {
+                  signal: loadCtrl.signal,
+                  onProgress: (ev) => {
+                    if (loadCtrl.signal.aborted || llmReady) return;
+                    let pct = null;
+                    let detail = "";
+                    if (ev.kind === "bytes" && ev.total > 0) {
+                      pct = Math.min(99, Math.round((ev.loaded / ev.total) * 100));
+                      const loadedMB = (ev.loaded / 1048576).toFixed(0);
+                      const totalMB = (ev.total / 1048576).toFixed(0);
+                      detail = ` · ${loadedMB}/${totalMB} MB`;
+                    } else if (typeof ev.fraction === "number") {
+                      pct = Math.min(99, Math.round(ev.fraction * 100));
+                      if (ev.message) detail = ` · ${ev.message}`;
+                    }
+                    updateDeviceBadgeUI("loading", pct);
+                    if (currentGenId > 0 && !activeSampleKey) {
+                      jsonRender(
+                        {
+                          component: "CardStream",
+                          children: [
+                            {
+                              component: "AffirmationCard",
+                              props: {
+                                id: "warmup",
+                                index: "··",
+                                text: `Loading ${candidate.shortName} (${candidate.sizeLabel}) unified Text + 24kHz Speech on WebGPU (${pct ?? 0}%${detail})...`,
+                                science: `LOCALFIRST · ${candidate.tierName.toUpperCase()}`,
+                                status: "streaming",
+                              },
+                            },
+                          ],
+                        },
+                        root
+                      );
+                    }
+                  },
+                }
+              );
+
+              lfm3Session = lfm3Model.create_session();
+              llmReady = true;
+              ttsReady = true;
+              updateDeviceBadgeUI("ready");
+              return;
+            }
+
+            // Lightweight ONNX fallback tier via webml-kit (+ Kokoro-82M TTS)
             await llmClient.load({
               task: "text-generation",
               modelId: candidate.modelId,
               device: selectedBackend,
               dtype: candidate.dtype,
               onProgress: (ev) => {
+                if (loadCtrl.signal.aborted) return;
                 if (!llmReady && ev.status === "downloading") {
                   updateDeviceBadgeUI("loading", ev.percent || 0);
                   if (currentGenId > 0 && !activeSampleKey) {
@@ -1833,7 +2162,7 @@
                             props: {
                               id: "warmup",
                               index: "··",
-                              text: `Loading ${candidate.shortName} (${candidate.sizeMB}MB) via localfirst + webml-kit (${ev.percent || 0}% · ${loadedMB}/${totalMB} MB)...`,
+                              text: `Loading ${candidate.shortName} (${candidate.sizeLabel}) via localfirst + webml-kit (${ev.percent || 0}% · ${loadedMB}/${totalMB} MB)...`,
                               science: `LOCALFIRST · ${candidate.tierName.toUpperCase()}`,
                               status: "streaming",
                             },
@@ -1849,13 +2178,21 @@
 
             llmReady = true;
             updateDeviceBadgeUI("ready");
+            if (!isMobileDevice) {
+              initTTSPreload();
+            }
             return;
           } catch (err) {
+            if (loadCtrl.signal.aborted || err?.name === "AbortError") {
+              return;
+            }
             console.warn(
               `[localfirst] ${candidate.shortName} failed on ${selectedBackend}, falling back to lighter model:`,
               err
             );
-            selectedBackend = "wasm";
+            if (candidate.engine !== "lfm3-omni") {
+              selectedBackend = "wasm";
+            }
           }
         }
       })();
@@ -1879,6 +2216,18 @@
       if (genId !== currentGenId) return;
 
       const finalizedCards = [];
+      const fallbackTemplates = [
+        `I narrow my attention to the single next verifiable step in ${scenario}.`,
+        `The physical alertness I feel during ${scenario} is fuel sharpening my clarity.`,
+        `My steadiness in ${scenario} comes from my preparation and values, not external noise.`,
+        `I observe urgency around ${scenario} as data, never as a reason to rush my judgment.`,
+        `With one slow exhale, my nervous system settles so I can navigate ${scenario} deliberately.`,
+        `Every obstacle inside ${scenario} gives me diagnostic feedback that refines my approach.`,
+        `I protect unfragmented focus while working through ${scenario} one layer at a time.`,
+        `I speak to myself with objective calm and precision throughout ${scenario}.`,
+        `I separate what I can control right now in ${scenario} from what can wait.`,
+        `Steady, methodical progress in ${scenario} is enough for this moment.`,
+      ];
 
       const renderLiveState = (streamingText = null, streamingLens = null) => {
         if (genId !== currentGenId) return;
@@ -1929,6 +2278,129 @@
                   .join("\n- ")}`
               : "";
 
+          // Unified Flagship Path: Liquid AI LFM3-Omni-2B interleaved Text + 24kHz Speech on WebGPU
+          if (selectedModelTier.engine === "lfm3-omni" && lfm3Session && !lfm3Model?.lost) {
+            try {
+              const omniMessages = [
+                {
+                  role: "system",
+                  content:
+                    "You write one single, evidence-based, first-person affirmation grounded in behavioral neuroscience and cognitive psychology.\n" +
+                    "Rules:\n" +
+                    "- Output ONLY one single sentence (12 to 20 words) in first person ('I...' or 'My...' or 'With each...').\n" +
+                    "- Never use toxic positivity, clichés, or vague wishes.\n" +
+                    "- Do not include numbers, quotes, or extra commentary.\n" +
+                    "Respond with interleaved text and audio.",
+                },
+                {
+                  role: "user",
+                  content:
+                    `Situation: "${scenario}"\n` +
+                    `Scientific lens (${lens.tag}): ${lens.cue}${avoidClause}\n` +
+                    `Write 1 specific first-person sentence for this lens:`,
+                },
+              ];
+
+              const sr = lfm3Model.audio_sampling_rate || 24000;
+              let rawCardText = "";
+              const omniAudioChunks = [];
+
+              await withLfm3TurnLock(async () => {
+                if (genId !== currentGenId) return;
+                const turnCtrl = new AbortController();
+                lfm3TurnAbortController = turnCtrl;
+                try {
+                  // Note: Do NOT pass do_sample: true for interleaved speech output;
+                  // LFM3-Omni greedily decodes text while its depth decoder samples 24kHz speech.
+                  const stream = lfm3Session.generate(omniMessages, {
+                    generation_mode: "interleaved",
+                    max_new_tokens: 240,
+                    signal: turnCtrl.signal,
+                  });
+
+                  for await (const ev of stream) {
+                    if (genId !== currentGenId) {
+                      turnCtrl.abort();
+                      break;
+                    }
+                    if (ev.type === "text" && ev.text) {
+                      rawCardText += ev.text;
+                      const firstLine = cleanAffirmationText(rawCardText.split(/\r?\n/)[0] || "");
+                      const firstSentence = (firstLine.match(/^[^.!?]+[.!?]?/) || [
+                        firstLine,
+                      ])[0].trim();
+                      if (firstSentence) {
+                        renderLiveState(firstSentence, lens.tag);
+                      }
+                    } else if (ev.type === "audio" && ev.audio && ev.audio.length > 0) {
+                      const pcm = new Float32Array(ev.audio);
+                      omniAudioChunks.push(pcm);
+                      enqueueAudio({
+                        genId,
+                        index: cardIdx,
+                        text: rawCardText,
+                        samples: pcm,
+                        sampleRate: sr,
+                        isStreamChunk: true,
+                      });
+                    }
+                  }
+                } finally {
+                  if (lfm3TurnAbortController === turnCtrl) {
+                    lfm3TurnAbortController = null;
+                  }
+                }
+              });
+
+              if (genId !== currentGenId) return;
+
+              const rawLine = cleanAffirmationText(rawCardText.split(/\r?\n/)[0] || "");
+              let finalSentence = (rawLine.match(/^[^.!?]+[.!?]?/) || [rawLine])[0].trim();
+              if (finalSentence && !/[.!?]$/.test(finalSentence)) {
+                finalSentence += ".";
+              }
+
+              let usedFallbackSentence = false;
+              if (
+                !finalSentence ||
+                !isUniqueEnough(
+                  finalSentence,
+                  finalizedCards.map((c) => c.text)
+                )
+              ) {
+                finalSentence = fallbackTemplates[cardIdx % fallbackTemplates.length];
+                usedFallbackSentence = true;
+              }
+
+              finalizedCards.push({ text: finalSentence, science: lens.tag });
+              renderLiveState(null, null);
+
+              if (!usedFallbackSentence && omniAudioChunks.length > 0) {
+                const merged = normalizeAudioSamples(mergeFloat32Chunks(omniAudioChunks));
+                cardAudioChunks.set(cardIdx, [{ samples: merged, sampleRate: sr }]);
+              } else {
+                synthesizeAndStreamCard(genId, cardIdx, finalSentence);
+              }
+              continue;
+            } catch (omniErr) {
+              if (omniErr?.name === "AbortError" || genId !== currentGenId) return;
+              console.warn(
+                "[localfirst] LFM3-Omni runtime error, seamlessly falling back to lightweight ONNX + Kokoro-82M:",
+                omniErr
+              );
+              lfm3Model = null;
+              lfm3Session = null;
+              llmReady = false;
+              llmLoadPromise = null;
+              selectedModelTier = isMobileDevice
+                ? LIGHTWEIGHT_MODEL_TIERS[0]
+                : LIGHTWEIGHT_MODEL_TIERS[2];
+              await initLLMPreload();
+              if (genId !== currentGenId) return;
+            }
+          }
+
+          // Lightweight / Mobile Fallback Path: Qwen2.5-0.5B or SmolLM2-135M/360M + Kokoro-82M TTS
           const messages = [
             {
               role: "system",
@@ -1972,18 +2444,6 @@
           }
 
           if (!finalSentence || !isUniqueEnough(finalSentence, finalizedCards.map((c) => c.text))) {
-            const fallbackTemplates = [
-              `I narrow my attention to the single next verifiable step in ${scenario}.`,
-              `The physical alertness I feel during ${scenario} is fuel sharpening my clarity.`,
-              `My steadiness in ${scenario} comes from my preparation and values, not external noise.`,
-              `I observe urgency around ${scenario} as data, never as a reason to rush my judgment.`,
-              `With one slow exhale, my nervous system settles so I can navigate ${scenario} deliberately.`,
-              `Every obstacle inside ${scenario} gives me diagnostic feedback that refines my approach.`,
-              `I protect unfragmented focus while working through ${scenario} one layer at a time.`,
-              `I speak to myself with objective calm and precision throughout ${scenario}.`,
-              `I separate what I can control right now in ${scenario} from what can wait.`,
-              `Steady, methodical progress in ${scenario} is enough for this moment.`,
-            ];
             finalSentence = fallbackTemplates[cardIdx % fallbackTemplates.length];
           }
 
@@ -1998,7 +2458,7 @@
         }
       } catch (err) {
         if (genId === currentGenId) {
-          console.error("localfirst / webml-kit generation error:", err);
+          console.error("localfirst generation error:", err);
         }
       }
     }
@@ -2013,6 +2473,7 @@
       ensureAudioContext();
       stopAllAudio();
 
+      interruptLfm3Turn();
       llmClient.interrupt();
       ttsClient.interrupt();
 
@@ -2040,7 +2501,7 @@
                 index: "··",
                 text: llmReady
                   ? `Streaming ${selectedCardCount} science-backed affirmations via ${selectedModelTier.shortName}...`
-                  : `Warming up ${selectedModelTier.shortName} (${selectedModelTier.sizeMB}MB) via localfirst...`,
+                  : `Warming up ${selectedModelTier.shortName} (${selectedModelTier.sizeLabel}) via localfirst...`,
                 science: `LOCALFIRST · ${selectedModelTier.tierName.toUpperCase()}`,
                 status: "streaming",
               },
@@ -2070,12 +2531,13 @@
       });
     });
 
-    // Startup: Probe hardware via @ondevice/localfirst detect() & browser-llm-fit fit()
-    // On mobile, serialize loading so two ONNX models never compile simultaneously.
+    // Startup: Probe hardware via @ondevice/localfirst detect(), Lfm3Omni.checkAvailability(), & browser-llm-fit fit()
+    // On desktop 8GB+ WebGPU, LFM3-Omni-2B handles both Text + 24kHz TTS in a single model.
+    // On mobile/fallback, serialize loading so two ONNX models never compile simultaneously.
     (async () => {
       await probeHardwareAndSelectModel();
       await initLLMPreload();
-      if (!isMobileDevice) {
+      if (!isMobileDevice && selectedModelTier.engine !== "lfm3-omni") {
         initTTSPreload();
       }
     })();

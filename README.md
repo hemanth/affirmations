@@ -1,6 +1,6 @@
 # affirmations
 
-Science-backed affirmations with on-device LLM streaming and 24kHz Kokoro-82M neural voice synthesis.
+Science-backed affirmations with unified `LFM3-Omni-2B` WebGPU text + 24kHz speech streaming and `@ondevice/localfirst` mobile fallback (`SmolLM2-135M` + `Kokoro-82M`).
 
 ![affirmations demo](./affirmations-social.gif)
 
@@ -11,60 +11,48 @@ npx serve .
 ## Quick start
 
 ```js
+import { Lfm3OmniForConditionalGeneration } from './Lfm3OmniForConditionalGeneration.js';
+
+const avail = await Lfm3OmniForConditionalGeneration.checkAvailability('LiquidAI/LFM3-Omni-2B-GGUF');
+const model = await Lfm3OmniForConditionalGeneration.from_pretrained('LiquidAI/LFM3-Omni-2B-GGUF');
+const session = model.create_session();
+
+const stream = session.generate(
+  [
+    { role: 'system', content: 'Write one grounded first-person affirmation.\nRespond with interleaved text and audio.' },
+    { role: 'user', content: 'Situation: Shipping a complex release' }
+  ],
+  { generation_mode: 'interleaved', max_new_tokens: 240 }
+);
+
+for await (const ev of stream) {
+  if (ev.type === 'text') renderCard(ev.text);
+  if (ev.type === 'audio') schedule24kHzPCM(ev.audio, model.audio_sampling_rate);
+}
+```
+
+Runs Liquid AI `LFM3-Omni-2B` (`Q4_0`, 1.26GB) natively in WebGPU to stream affirmation tokens and 24kHz `Float32Array` speech frames from a single unified session, reusing cached system-prompt KV state across cards.
+
+## Hardware-aware fallback
+
+```js
 import localfirst, { detect } from '@ondevice/localfirst';
 import fit from 'browser-llm-fit';
 import { ModelClient } from 'webml-kit';
 
 const telemetry = await detect();
-const isMobile = !telemetry.gpu.webgpu || telemetry.memory.totalGb <= 4;
-const modelId = isMobile
-  ? 'HuggingFaceTB/SmolLM2-135M-Instruct'
-  : 'onnx-community/Qwen2.5-0.5B-Instruct';
-
-const llm = new ModelClient('./model-worker.js');
-await llm.load({ task: 'text-generation', modelId, device: isMobile ? 'wasm' : 'webgpu', dtype: 'q4' });
-
-for await (const { token } of llm.stream(messages, { maxNewTokens: 28, doSample: false })) {
-  renderCard(token);
-}
-```
-
-`detect()` probes WebGPU, RAM, and Wasm SIMD in under 2ms. `fit()` checks model hardware bounds. `ModelClient` streams tokens and 24kHz neural audio from an isolated Web Worker.
-
-## Hardware-aware model selection
-
-```js
 const check = await fit('smollm2-135m-instruct', {
   ram: telemetry.memory.totalGb,
   gpu: telemetry.gpu.webgpu ? 'webgpu-f16' : 'wasm-cpu'
 });
 
-const ai = await localfirst({
-  mode: 'prefer-local',
-  local: { llm, tts }
-});
-```
-
-Selects `SmolLM2-135M` (92MB `q4`) on mobile and WASM devices, `SmolLM2-360M` (240MB `q4`) on 4–6GB systems, and `Qwen2.5-0.5B` (350MB `q4`) on desktop WebGPU, stepping down automatically on allocation errors.
-
-## On-device Kokoro-82M neural TTS
-
-```js
+const llm = new ModelClient('./model-worker.js');
 const tts = new ModelClient('./model-worker.js');
-await tts.load({
-  task: 'text-to-speech',
-  modelId: 'onnx-community/Kokoro-82M-v1.0-ONNX',
-  dtype: 'q8',
-  device: 'wasm'
-});
-
-const { audio, sampling_rate } = await tts.run('text-to-speech', sentence, {
-  voice: 'af_heart',
-  speed: 1.0
-});
+await llm.load({ task: 'text-generation', modelId: 'HuggingFaceTB/SmolLM2-135M-Instruct', device: 'wasm', dtype: 'q4' });
+await tts.load({ task: 'text-to-speech', modelId: 'onnx-community/Kokoro-82M-v1.0-ONNX', device: 'wasm', dtype: 'q8' });
 ```
 
-Synthesizes 24kHz `Float32Array` audio per clause as each affirmation finishes streaming, with `1×..99×` and `∞` loop playback over Web Audio API.
+`detect()` probes WebGPU limits, RAM, and Wasm SIMD in under 2ms. Desktop 8GB+ WebGPU selects `LFM3-Omni-2B` (`interleaved` + `audio` modes), stepping down automatically to `Qwen2.5-0.5B` (350MB), `SmolLM2-360M` (240MB), or `SmolLM2-135M` (92MB) + `Kokoro-82M` on mobile and WASM devices. Click the header badge at any time to cycle tiers.
 
 ## Science lenses
 
@@ -85,6 +73,7 @@ Synthesizes 24kHz `Float32Array` audio per clause as each affirmation finishes s
 
 ## Related
 
+- [LiquidAI/LFM3-Omni-2B](https://huggingface.co/LiquidAI/LFM3-Omni-2B)
 - [@ondevice/localfirst](https://github.com/hemanth/localfirst)
 - [browser-llm-fit](https://github.com/hemanth/browser-llm-fit)
 - [webml-kit](https://github.com/hemanth/webml-kit)

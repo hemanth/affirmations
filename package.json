@@ -1,7 +1,7 @@
 {
   "name": "affirmations",
-  "version": "1.0.0",
-  "description": "Science-backed affirmations with on-device LLM streaming and 24kHz Kokoro-82M neural voice synthesis.",
+  "version": "1.1.0",
+  "description": "Science-backed affirmations with unified LFM3-Omni-2B WebGPU text + 24kHz speech streaming and @ondevice/localfirst mobile fallback.",
   "type": "module",
   "scripts": {
     "start": "npx serve ."
