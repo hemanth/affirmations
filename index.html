@@ -1157,7 +1157,19 @@
     let lastScheduledCardIndex = -1;
     let activeSpeakingId = -1;
     let activeSpeakDurationMs = 2800;
+    let ttsLoadingCardId = -1;
+    let ttsLoadingPercent = null;
     let currentSpec = null;
+
+    // Mobile / iOS hardware-silent-switch-safe HTML5 <audio> playback state
+    let mobileAudioEl = null;
+    let mobileAudioUnlocked = false;
+    let silentUnlockUrl = null;
+    let mobileAudioQueue = [];
+    let mobileLoopRunning = false;
+    let mobileAbortWait = null;
+    let pendingGestureResume = false;
+    const activeMobileBlobUrls = new Set();
 
     const cardAudioChunks = new Map();
     const wavBufferCache = new Map();
@@ -1474,18 +1486,129 @@
       updateRepeatUI();
     });
 
+    function isHandsetOrTabletPlatform() {
+      if (isMobileDevice) return true;
+      const ua = navigator.userAgent || "";
+      if (/iPhone|iPad|iPod|Android|Mobile|CriOS|FxiOS/i.test(ua)) return true;
+      // iPadOS Safari desktop-mode UA reports MacIntel with multi-touch support
+      if (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1) return true;
+      return false;
+    }
+
+    function encodePcm16WavBlobUrl(samples, sampleRate = 24000) {
+      const pcmBytes = samples.length * 2;
+      const buffer = new ArrayBuffer(44 + pcmBytes);
+      const view = new DataView(buffer);
+      const writeAscii = (off, str) => {
+        for (let i = 0; i < str.length; i++) view.setUint8(off + i, str.charCodeAt(i));
+      };
+      writeAscii(0, "RIFF");
+      view.setUint32(4, 36 + pcmBytes, true);
+      writeAscii(8, "WAVE");
+      writeAscii(12, "fmt ");
+      view.setUint32(16, 16, true);
+      view.setUint16(20, 1, true); // PCM = 1 (universal iOS/Android hardware decoder support)
+      view.setUint16(22, 1, true); // Mono
+      view.setUint32(24, sampleRate, true);
+      view.setUint32(28, sampleRate * 2, true);
+      view.setUint16(32, 2, true);
+      view.setUint16(34, 16, true); // 16-bit
+      writeAscii(36, "data");
+      view.setUint32(40, pcmBytes, true);
+
+      let offset = 44;
+      for (let i = 0; i < samples.length; i++, offset += 2) {
+        const s = Math.max(-1, Math.min(1, samples[i]));
+        view.setInt16(offset, s < 0 ? s * 32768 : s * 32767, true);
+      }
+      return URL.createObjectURL(new Blob([buffer], { type: "audio/wav" }));
+    }
+
+    function getMobileAudioElement() {
+      if (!mobileAudioEl) {
+        mobileAudioEl = new Audio();
+        mobileAudioEl.playsInline = true;
+        mobileAudioEl.setAttribute("playsinline", "");
+        mobileAudioEl.setAttribute("webkit-playsinline", "");
+        mobileAudioEl.preload = "auto";
+        mobileAudioEl.volume = 1.0;
+      }
+      return mobileAudioEl;
+    }
+
+    function getSilentUnlockUrl() {
+      if (!silentUnlockUrl) {
+        silentUnlockUrl = encodePcm16WavBlobUrl(new Float32Array(240), 24000);
+      }
+      return silentUnlockUrl;
+    }
+
     function ensureAudioContext() {
+      // Promote iOS 17+ Safari audio session from "ambient" (muted by Silent switch) to "playback"
+      try {
+        if (navigator.audioSession && navigator.audioSession.type !== "playback") {
+          navigator.audioSession.type = "playback";
+        }
+      } catch (_) {}
+
       if (!audioCtx) {
         const Ctx = window.AudioContext || window.webkitAudioContext;
-        audioCtx = new Ctx({ sampleRate: 24000 });
-        masterGain = audioCtx.createGain();
-        masterGain.gain.value = 1.45;
-        masterGain.connect(audioCtx.destination);
+        if (Ctx) {
+          // Use native hardware sample rate (48kHz/44.1kHz on mobile) — forcing {sampleRate: 24000}
+          // causes silent output on several mobile WebKit / Android hardware DACs.
+          audioCtx = new Ctx();
+          masterGain = audioCtx.createGain();
+          masterGain.gain.value = 1.35;
+          masterGain.connect(audioCtx.destination);
+        }
       }
-      if (audioCtx.state === "suspended") {
-        audioCtx.resume();
+      if (audioCtx && audioCtx.state !== "running") {
+        audioCtx.resume().catch(() => {});
       }
     }
+
+    function unlockAudioOnUserGesture() {
+      ensureAudioContext();
+
+      // Synchronously play 1-sample silent buffer to unlock iOS WebKit AudioContext
+      if (audioCtx && audioCtx.state !== "running") {
+        try {
+          const silentBuf = audioCtx.createBuffer(1, 1, audioCtx.sampleRate || 48000);
+          const src = audioCtx.createBufferSource();
+          src.buffer = silentBuf;
+          src.connect(audioCtx.destination);
+          src.start(0);
+        } catch (_) {}
+      }
+
+      // Bless singleton HTML5 <audio> element inside gesture so async TTS & iPhone Silent Mode work 100%
+      const el = getMobileAudioElement();
+      if (!mobileAudioUnlocked && !mobileLoopRunning) {
+        try {
+          el.src = getSilentUnlockUrl();
+          const p = el.play();
+          if (p && typeof p.then === "function") {
+            p.then(() => {
+              mobileAudioUnlocked = true;
+              if (!mobileLoopRunning) {
+                el.pause();
+                el.currentTime = 0;
+              }
+            }).catch(() => {});
+          } else {
+            mobileAudioUnlocked = true;
+          }
+        } catch (_) {}
+      } else if (pendingGestureResume && mobileAudioQueue.length > 0 && !mobileLoopRunning) {
+        pendingGestureResume = false;
+        pumpMobileAudioQueue();
+      }
+    }
+
+    // Unlock on touchend/pointerup/click/keydown (touchstart is not a valid media-activation gesture on iOS Safari)
+    ["touchend", "pointerup", "click", "keydown"].forEach((evt) => {
+      window.addEventListener(evt, unlockAudioOnUserGesture, { capture: true, passive: true });
+    });
 
     function normalizeAudioSamples(samples) {
       let peak = 0;
@@ -1493,8 +1616,8 @@
         const a = Math.abs(samples[i]);
         if (a > peak) peak = a;
       }
-      if (peak > 0.01 && peak < 0.88) {
-        const scale = 0.92 / peak;
+      if (peak > 0.01 && peak < 0.92) {
+        const scale = 0.95 / peak;
         const out = new Float32Array(samples.length);
         for (let i = 0; i < samples.length; i++) {
           out[i] = Math.max(-1, Math.min(1, samples[i] * scale));
@@ -1534,13 +1657,14 @@
         }
         const isSpeaking = activeSpeakingId === props.id;
         const isStreaming = props.status === "streaming";
+        const isLoadingVoice = !isSpeaking && !isStreaming && ttsLoadingCardId === props.id;
 
         if (isSpeaking && !el.classList.contains("speaking")) {
           el.style.setProperty("--speak-ms", `${activeSpeakDurationMs}ms`);
         }
 
         el.classList.toggle("speaking", isSpeaking);
-        el.classList.toggle("streaming", isStreaming && !isSpeaking);
+        el.classList.toggle("streaming", (isStreaming || isLoadingVoice) && !isSpeaking);
         el.querySelector(".aff-num").textContent =
           typeof props.index === "number" ? String(props.index).padStart(2, "0") : "··";
         el.querySelector(".aff-text").textContent = props.text;
@@ -1555,6 +1679,10 @@
           ? "speaking"
           : isStreaming
           ? "streaming"
+          : isLoadingVoice
+          ? ttsLoadingPercent !== null
+            ? `voice ${ttsLoadingPercent}%`
+            : "voice..."
           : "speak";
         return el;
       },
@@ -1604,6 +1732,7 @@
     }
 
     function stopAllAudio() {
+      // Stop Web Audio sources
       for (const src of scheduledSources) {
         try {
           src.onended = null;
@@ -1615,6 +1744,27 @@
         clearTimeout(timer);
       }
       scheduledHighlightTimers.clear();
+
+      // Stop Mobile HTML5 <audio> queue & revoke WAV blobs
+      mobileAudioQueue = [];
+      pendingGestureResume = false;
+      if (mobileAbortWait) {
+        const abortFn = mobileAbortWait;
+        mobileAbortWait = null;
+        abortFn();
+      }
+      if (mobileAudioEl) {
+        try {
+          mobileAudioEl.pause();
+        } catch (_) {}
+      }
+      for (const url of activeMobileBlobUrls) {
+        try {
+          URL.revokeObjectURL(url);
+        } catch (_) {}
+      }
+      activeMobileBlobUrls.clear();
+
       nextPlayTime = 0;
       lastScheduledCardIndex = -1;
       isPlaying = false;
@@ -1666,7 +1816,7 @@
     function onAudioQueueDrained() {
       const drainTimer = setTimeout(() => {
         scheduledHighlightTimers.delete(drainTimer);
-        if (scheduledSources.size > 0) return;
+        if (scheduledSources.size > 0 || mobileLoopRunning || mobileAudioQueue.length > 0) return;
         if (checkAndScheduleRepeatPass()) return;
         isPlaying = false;
         lastScheduledCardIndex = -1;
@@ -1676,76 +1826,274 @@
     }
 
     /**
-     * Sample-accurate gapless Web Audio playhead scheduler.
-     * Supports both 0ms-gap streaming PCM frames from LFM3-Omni-2B (`isStreamChunk: true`)
-     * and clause-level buffers from Kokoro-82M / prebaked WAVs.
+     * Mobile-first HTML5 <audio> WAV queue.
+     * Routes to iOS `AVAudioSessionCategoryPlayback` on all iOS/Android browsers so speech is
+     * audible even when the physical iPhone Silent Switch is ON, and ONLY marks a card "speaking"
+     * once `el.play()` actually starts hardware output.
+     */
+    async function pumpMobileAudioQueue() {
+      if (mobileLoopRunning) return;
+      mobileLoopRunning = true;
+      const el = getMobileAudioElement();
+
+      try {
+        while (mobileAudioQueue.length > 0) {
+          const item = mobileAudioQueue.shift();
+          if (!item || (item.genId !== undefined && item.genId !== currentGenId)) {
+            continue;
+          }
+
+          const sr = item.sampleRate || 24000;
+          const durMs = Math.max(250, Math.round((item.samples.length / sr) * 1000));
+          const blobUrl = encodePcm16WavBlobUrl(item.samples, sr);
+          activeMobileBlobUrls.add(blobUrl);
+
+          let started = false;
+          try {
+            el.src = blobUrl;
+            el.currentTime = 0;
+            await el.play();
+            mobileAudioUnlocked = true;
+            started = true;
+          } catch (playErr) {
+            URL.revokeObjectURL(blobUrl);
+            activeMobileBlobUrls.delete(blobUrl);
+            // If blocked waiting for gesture, keep at front of queue without faking "speaking"
+            if (playErr?.name === "NotAllowedError") {
+              mobileAudioQueue.unshift(item);
+              pendingGestureResume = true;
+              break;
+            }
+            continue;
+          }
+
+          if (item.genId !== undefined && item.genId !== currentGenId) {
+            URL.revokeObjectURL(blobUrl);
+            activeMobileBlobUrls.delete(blobUrl);
+            break;
+          }
+
+          isPlaying = true;
+          lastScheduledCardIndex = item.index;
+          updateSpeakingHighlight(item.index, durMs);
+
+          if (started) {
+            await new Promise((resolve) => {
+              let settled = false;
+              const finish = () => {
+                if (settled) return;
+                settled = true;
+                el.removeEventListener("ended", finish);
+                el.removeEventListener("error", finish);
+                clearTimeout(safetyTimer);
+                if (mobileAbortWait === finish) mobileAbortWait = null;
+                resolve();
+              };
+              const safetyTimer = setTimeout(finish, durMs + 1200);
+              mobileAbortWait = finish;
+              el.addEventListener("ended", finish, { once: true });
+              el.addEventListener("error", finish, { once: true });
+            });
+          }
+
+          URL.revokeObjectURL(blobUrl);
+          activeMobileBlobUrls.delete(blobUrl);
+
+          if (item.genId !== undefined && item.genId !== currentGenId) break;
+
+          // Natural pause between clauses (55ms) or between cards (200ms)
+          const nextItem = mobileAudioQueue[0];
+          const pauseMs = nextItem && nextItem.index === item.index ? 55 : 200;
+          await new Promise((resolve) => {
+            const t = setTimeout(() => {
+              scheduledHighlightTimers.delete(t);
+              resolve();
+            }, pauseMs);
+            scheduledHighlightTimers.add(t);
+          });
+        }
+      } finally {
+        mobileLoopRunning = false;
+        if (!pendingGestureResume && mobileAudioQueue.length === 0 && scheduledSources.size === 0) {
+          onAudioQueueDrained();
+        }
+      }
+    }
+
+    /**
+     * Hybrid Audio Scheduler:
+     * - Mobile / iOS / Android (`!item.isStreamChunk`): plays via gesture-blessed HTML5 `<audio>`
+     *   16-bit PCM WAV blobs (immune to iPhone Silent Switch & mobile WebKit sampleRate bugs).
+     * - Desktop & LFM3-Omni-2B live PCM chunks (`isStreamChunk: true`): sample-accurate gapless
+     *   Web Audio API playhead scheduler at native hardware sample rate.
      */
     function enqueueAudio(item) {
       if (item.genId !== undefined && item.genId !== currentGenId) return;
       if (!item.samples || item.samples.length === 0) return;
 
+      if (isHandsetOrTabletPlatform() && !item.isStreamChunk) {
+        mobileAudioQueue.push(item);
+        pumpMobileAudioQueue();
+        return;
+      }
+
       ensureAudioContext();
-      isPlaying = true;
-
-      const sr = item.sampleRate || 24000;
-      const now = audioCtx.currentTime;
-      const isNewCard = item.index !== lastScheduledCardIndex;
-
-      let startAt;
-      if (lastScheduledCardIndex === -1) {
-        startAt = Math.max(now + 0.015, nextPlayTime);
-      } else if (!isNewCard) {
-        // Same card: 0ms sample-accurate stitch for LFM3-Omni live PCM chunks; 55ms pause for clauses
-        startAt = item.isStreamChunk
-          ? Math.max(now, nextPlayTime)
-          : Math.max(now, nextPlayTime + 0.055);
-      } else {
-        // Next card: 200ms natural breathing pause
-        startAt = Math.max(now + 0.015, nextPlayTime + 0.2);
+      if (!audioCtx) {
+        mobileAudioQueue.push(item);
+        pumpMobileAudioQueue();
+        return;
       }
 
-      const durSec = item.samples.length / sr;
-      const durMs = Math.round(durSec * 1000);
-      lastScheduledCardIndex = item.index;
-      nextPlayTime = startAt + durSec;
+      const scheduleOnRunningContext = () => {
+        if (item.genId !== undefined && item.genId !== currentGenId) return;
+        isPlaying = true;
 
-      if (isNewCard) {
-        const delayMs = Math.max(0, Math.round((startAt - now) * 1000));
-        const hlDuration = item.isStreamChunk ? Math.max(3400, durMs) : durMs;
-        if (delayMs <= 16) {
-          updateSpeakingHighlight(item.index, hlDuration);
+        const sr = item.sampleRate || 24000;
+        const now = audioCtx.currentTime;
+        const isNewCard = item.index !== lastScheduledCardIndex;
+
+        let startAt;
+        if (lastScheduledCardIndex === -1) {
+          startAt = Math.max(now + 0.015, nextPlayTime);
+        } else if (!isNewCard) {
+          // Same card: 0ms sample-accurate stitch for LFM3-Omni live PCM chunks; 55ms pause for clauses
+          startAt = item.isStreamChunk
+            ? Math.max(now, nextPlayTime)
+            : Math.max(now, nextPlayTime + 0.055);
         } else {
-          const hlTimer = setTimeout(() => {
-            scheduledHighlightTimers.delete(hlTimer);
-            if (item.genId === undefined || item.genId === currentGenId) {
-              updateSpeakingHighlight(item.index, hlDuration);
-            }
-          }, delayMs);
-          scheduledHighlightTimers.add(hlTimer);
+          // Next card: 200ms natural breathing pause
+          startAt = Math.max(now + 0.015, nextPlayTime + 0.2);
         }
+
+        const durSec = item.samples.length / sr;
+        const durMs = Math.round(durSec * 1000);
+        lastScheduledCardIndex = item.index;
+        nextPlayTime = startAt + durSec;
+
+        if (isNewCard) {
+          const delayMs = Math.max(0, Math.round((startAt - now) * 1000));
+          const hlDuration = item.isStreamChunk ? Math.max(3400, durMs) : durMs;
+          if (delayMs <= 16) {
+            updateSpeakingHighlight(item.index, hlDuration);
+          } else {
+            const hlTimer = setTimeout(() => {
+              scheduledHighlightTimers.delete(hlTimer);
+              if (item.genId === undefined || item.genId === currentGenId) {
+                updateSpeakingHighlight(item.index, hlDuration);
+              }
+            }, delayMs);
+            scheduledHighlightTimers.add(hlTimer);
+          }
+        }
+
+        const buf = audioCtx.createBuffer(1, item.samples.length, sr);
+        buf.getChannelData(0).set(item.samples);
+        const src = audioCtx.createBufferSource();
+        src.buffer = buf;
+        src.connect(masterGain || audioCtx.destination);
+        scheduledSources.add(src);
+        src.onended = () => {
+          scheduledSources.delete(src);
+          if (scheduledSources.size === 0) {
+            onAudioQueueDrained();
+          }
+        };
+        src.start(startAt);
+      };
+
+      if (audioCtx.state !== "running" && !item.isStreamChunk) {
+        audioCtx
+          .resume()
+          .then(() => {
+            if (audioCtx.state === "running") {
+              scheduleOnRunningContext();
+            } else {
+              mobileAudioQueue.push(item);
+              pumpMobileAudioQueue();
+            }
+          })
+          .catch(() => {
+            mobileAudioQueue.push(item);
+            pumpMobileAudioQueue();
+          });
+        return;
       }
 
-      const buf = audioCtx.createBuffer(1, item.samples.length, sr);
-      buf.copyToChannel(item.samples, 0);
-      const src = audioCtx.createBufferSource();
-      src.buffer = buf;
-      src.connect(masterGain || audioCtx.destination);
-      scheduledSources.add(src);
-      src.onended = () => {
-        scheduledSources.delete(src);
-        if (scheduledSources.size === 0) {
-          onAudioQueueDrained();
+      scheduleOnRunningContext();
+    }
+
+    function parseWavArrayBuffer(arr) {
+      if (arr.byteLength < 44) return null;
+      const view = new DataView(arr);
+      const magic =
+        String.fromCharCode(view.getUint8(0), view.getUint8(1), view.getUint8(2), view.getUint8(3)) +
+        String.fromCharCode(view.getUint8(8), view.getUint8(9), view.getUint8(10), view.getUint8(11));
+      if (magic !== "RIFFWAVE") return null;
+
+      let fmt = 1;
+      let channels = 1;
+      let sampleRate = 24000;
+      let bitsPerSample = 16;
+      let offset = 12;
+
+      while (offset + 8 <= arr.byteLength) {
+        const chunkId = String.fromCharCode(
+          view.getUint8(offset),
+          view.getUint8(offset + 1),
+          view.getUint8(offset + 2),
+          view.getUint8(offset + 3)
+        );
+        const chunkSize = view.getUint32(offset + 4, true);
+        const bodyOffset = offset + 8;
+
+        if (chunkId === "fmt " && chunkSize >= 16) {
+          fmt = view.getUint16(bodyOffset, true);
+          channels = Math.max(1, view.getUint16(bodyOffset + 2, true));
+          sampleRate = view.getUint32(bodyOffset + 4, true);
+          bitsPerSample = view.getUint16(bodyOffset + 14, true);
+        } else if (chunkId === "data") {
+          const byteLen = Math.min(chunkSize, arr.byteLength - bodyOffset);
+          if (fmt === 1 && bitsPerSample === 16) {
+            const frames = Math.floor(byteLen / (2 * channels));
+            const out = new Float32Array(frames);
+            for (let i = 0; i < frames; i++) {
+              out[i] = view.getInt16(bodyOffset + i * 2 * channels, true) / 32768;
+            }
+            return { samples: out, sampleRate };
+          }
+          if (fmt === 3 && bitsPerSample === 32) {
+            const frames = Math.floor(byteLen / (4 * channels));
+            const out = new Float32Array(frames);
+            for (let i = 0; i < frames; i++) {
+              out[i] = view.getFloat32(bodyOffset + i * 4 * channels, true);
+            }
+            return { samples: out, sampleRate };
+          }
         }
-      };
-      src.start(startAt);
+        offset = bodyOffset + chunkSize + (chunkSize % 2);
+      }
+      return null;
     }
 
     async function loadPrebakedWav(url) {
       if (wavBufferCache.has(url)) return wavBufferCache.get(url);
-      ensureAudioContext();
-      const res = await fetch(url);
+      const fetchUrl = url.includes("?") ? url : `${url}?v=2`;
+      const res = await fetch(fetchUrl);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const arr = await res.arrayBuffer();
+
+      // Fast pure-JS WAV parse preserves exact 24kHz PCM without touching mobile AudioContext
+      const parsed = parseWavArrayBuffer(arr);
+      if (parsed && parsed.samples.length > 0) {
+        const payload = {
+          samples: normalizeAudioSamples(parsed.samples),
+          sampleRate: parsed.sampleRate,
+        };
+        wavBufferCache.set(url, payload);
+        return payload;
+      }
+
+      ensureAudioContext();
       const decoded = await audioCtx.decodeAudioData(arr);
       const raw = decoded.getChannelData(0);
       const samples = normalizeAudioSamples(new Float32Array(raw));
@@ -1867,8 +2215,16 @@
       }
 
       // Fallback / Lightweight path: Kokoro-82M-v1.0-ONNX (q8 WASM)
+      if (!ttsReady) {
+        ttsLoadingCardId = index;
+        if (currentSpec) jsonRender(currentSpec, root);
+      }
       await initTTSPreload();
-      if (genId !== currentGenId) return;
+      if (ttsLoadingCardId === index) {
+        ttsLoadingCardId = -1;
+        if (currentSpec) jsonRender(currentSpec, root);
+      }
+      if (genId !== currentGenId || !ttsReady) return;
 
       const clauses = splitIntoClauses(text);
       for (let cIdx = 0; cIdx < clauses.length; cIdx++) {
@@ -1903,6 +2259,7 @@
     }
 
     function replayFromCard(startId) {
+      unlockAudioOnUserGesture();
       stopAllAudio();
       interruptLfm3Turn();
       ttsClient.interrupt();
@@ -2034,6 +2391,7 @@
     }
 
     function initTTSPreload() {
+      if (ttsReady) return Promise.resolve();
       if (ttsLoadPromise) return ttsLoadPromise;
       ttsLoadPromise = ttsClient
         .load({
@@ -2041,11 +2399,24 @@
           modelId: TTS_MODEL_ID,
           dtype: "q8",
           device: "wasm",
+          onProgress: (ev) => {
+            if (!ttsReady && ev && ev.status === "downloading") {
+              ttsLoadingPercent = typeof ev.percent === "number" ? ev.percent : null;
+              if (ttsLoadingCardId >= 0 && currentSpec) {
+                jsonRender(currentSpec, root);
+              }
+            }
+          },
         })
         .then(() => {
           ttsReady = true;
+          ttsLoadingPercent = null;
         })
-        .catch(() => {});
+        .catch((err) => {
+          console.warn("[Kokoro-82M] TTS preload failed, will retry on next request:", err);
+          ttsLoadPromise = null;
+          ttsLoadingPercent = null;
+        });
       return ttsLoadPromise;
     }
 
@@ -2468,10 +2839,11 @@
       const genId = currentGenId;
       generationComplete = false;
       completedPasses = 0;
+      ttsLoadingCardId = -1;
       activeSampleKey = sampleKey;
 
-      ensureAudioContext();
       stopAllAudio();
+      unlockAudioOnUserGesture();
 
       interruptLfm3Turn();
       llmClient.interrupt();
@@ -2533,12 +2905,18 @@
 
     // Startup: Probe hardware via @ondevice/localfirst detect(), Lfm3Omni.checkAvailability(), & browser-llm-fit fit()
     // On desktop 8GB+ WebGPU, LFM3-Omni-2B handles both Text + 24kHz TTS in a single model.
-    // On mobile/fallback, serialize loading so two ONNX models never compile simultaneously.
+    // On mobile/fallback, serialize loading (LLM first, then Kokoro-82M) so two ONNX models never compile simultaneously.
     (async () => {
       await probeHardwareAndSelectModel();
       await initLLMPreload();
-      if (!isMobileDevice && selectedModelTier.engine !== "lfm3-omni") {
-        initTTSPreload();
+      if (selectedModelTier.engine !== "lfm3-omni") {
+        if (isMobileDevice) {
+          setTimeout(() => {
+            if (selectedModelTier.engine !== "lfm3-omni") initTTSPreload();
+          }, 900);
+        } else {
+          initTTSPreload();
+        }
       }
     })();
   </script>
